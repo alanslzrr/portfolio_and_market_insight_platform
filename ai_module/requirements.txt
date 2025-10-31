@@ -1,0 +1,3 @@
+# Este archivo definirá las dependencias de Python necesarias para el módulo de IA
+# Incluirá openai, pandas, numpy, y otras librerías utilizadas
+

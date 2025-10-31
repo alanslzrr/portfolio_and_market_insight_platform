@@ -1,0 +1,551 @@
+@startuml Diagrama de Secuencia - Registro y Autenticación
+
+title Flujo de Registro y Autenticación
+
+actor Usuario as user
+participant "API Layer\n(Auth Endpoint)" as api
+participant "Auth Service" as auth_service
+participant "User Repository" as user_repo
+participant "Email Service" as email_service
+database "PostgreSQL" as db
+
+== Registro de Usuario ==
+user -> api: POST /api/v1/auth/register\n(email, password, full_name)
+activate api
+
+api -> api: Validar datos con Pydantic
+api -> auth_service: register_user(email, password, full_name)
+activate auth_service
+
+auth_service -> auth_service: Validar email único
+auth_service -> auth_service: Hash password (bcrypt)
+auth_service -> user_repo: create_user(user_data)
+activate user_repo
+
+user_repo -> db: INSERT INTO users
+activate db
+db --> user_repo: Usuario creado (no verificado)
+deactivate db
+
+user_repo --> auth_service: User object
+deactivate user_repo
+
+auth_service -> auth_service: Generar token de verificación
+auth_service -> email_service: send_verification_email(email, token)
+activate email_service
+email_service --> email_service: Enviar email con token
+deactivate email_service
+
+auth_service --> api: Usuario registrado
+deactivate auth_service
+api --> user: 201 Created\n{message, user_id, email_verification_required: true}
+deactivate api
+
+== Verificación de Email ==
+user -> api: POST /api/v1/auth/verify-email\n(token)
+activate api
+
+api -> auth_service: verify_email(token)
+activate auth_service
+
+auth_service -> auth_service: Validar token
+auth_service -> user_repo: update_user_verification(user_id)
+activate user_repo
+
+user_repo -> db: UPDATE users SET is_verified = true
+activate db
+db --> user_repo: Usuario verificado
+deactivate db
+
+user_repo --> auth_service: User actualizado
+deactivate user_repo
+auth_service --> api: Email verificado
+deactivate auth_service
+api --> user: 200 OK\n{message: "Email verificado"}
+deactivate api
+
+== Inicio de Sesión ==
+user -> api: POST /api/v1/auth/login\n(email, password)
+activate api
+
+api -> api: Validar datos con Pydantic
+api -> auth_service: authenticate_user(email, password)
+activate auth_service
+
+auth_service -> user_repo: get_user_by_email(email)
+activate user_repo
+
+user_repo -> db: SELECT * FROM users WHERE email = ?
+activate db
+db --> user_repo: User data
+deactivate db
+
+user_repo --> auth_service: User object
+deactivate user_repo
+
+auth_service -> auth_service: Verificar contraseña (bcrypt)
+auth_service -> auth_service: Validar usuario activo y verificado
+auth_service -> auth_service: Generar JWT access token (15 min)
+auth_service -> auth_service: Generar refresh token (7 días)
+auth_service --> api: {access_token, refresh_token, expires_in}
+deactivate auth_service
+
+api --> user: 200 OK\n{access_token, refresh_token, token_type, expires_in}
+deactivate api
+
+@enduml
+
+@startuml Diagrama de Secuencia - Crear Cartera
+
+title Flujo de Creación de Cartera
+
+actor Usuario as user
+participant "API Layer\n(Portfolio Endpoint)" as api
+participant "Auth Middleware" as auth
+participant "Portfolio Service" as portfolio_service
+participant "Portfolio Repository" as portfolio_repo
+database "PostgreSQL" as db
+
+user -> api: POST /api/v1/portfolios\nAuthorization: Bearer {token}\n{name, base_currency, description}
+activate api
+
+api -> auth: Validar token JWT
+activate auth
+auth -> auth: Verificar firma y expiración
+auth --> api: Usuario autenticado (user_id)
+deactivate auth
+
+api -> api: Validar datos con Pydantic
+api -> portfolio_service: create_portfolio(user_id, name, base_currency, description)
+activate portfolio_service
+
+portfolio_service -> portfolio_service: Validar nombre único por usuario
+portfolio_service -> portfolio_service: Validar moneda base soportada
+portfolio_service -> portfolio_repo: create_portfolio(portfolio_data)
+activate portfolio_repo
+
+portfolio_repo -> db: INSERT INTO portfolios\n(user_id, name, base_currency, description)
+activate db
+db --> portfolio_repo: Portfolio creado
+deactivate db
+
+portfolio_repo --> portfolio_service: Portfolio object
+deactivate portfolio_repo
+
+portfolio_service -> portfolio_service: Inicializar métricas (valor_total = 0)
+portfolio_service --> api: Portfolio creado
+deactivate portfolio_service
+
+api --> user: 201 Created\n{id, name, base_currency, total_value: 0, ...}
+deactivate api
+
+@enduml
+
+@startuml Diagrama de Secuencia - Registrar Operación de Compra
+
+title Flujo de Registro de Operación de Compra
+
+actor Usuario as user
+participant "API Layer\n(Operations Endpoint)" as api
+participant "Auth Middleware" as auth
+participant "Operation Service" as operation_service
+participant "Market Data Service" as market_service
+participant "Portfolio Repository" as portfolio_repo
+participant "Operation Repository" as operation_repo
+participant "Alpha Vantage API" as alpha_vantage
+database "PostgreSQL" as db
+
+user -> api: POST /api/v1/operations\nAuthorization: Bearer {token}\n{portfolio_id, asset_symbol, operation_type: "buy",\nquantity, price, currency, fees, date}
+activate api
+
+api -> auth: Validar token JWT
+activate auth
+auth --> api: Usuario autenticado (user_id)
+deactivate auth
+
+api -> api: Validar datos con Pydantic
+api -> operation_service: create_operation(operation_data, user_id)
+activate operation_service
+
+operation_service -> portfolio_repo: get_portfolio_by_id(portfolio_id, user_id)
+activate portfolio_repo
+
+portfolio_repo -> db: SELECT * FROM portfolios WHERE id = ? AND user_id = ?
+activate db
+db --> portfolio_repo: Portfolio data
+deactivate db
+
+portfolio_repo --> operation_service: Portfolio object
+deactivate portfolio_repo
+
+operation_service -> operation_service: Validar pertenencia de cartera al usuario
+operation_service -> operation_service: Calcular total_amount = (quantity * price) + fees
+operation_service -> operation_service: Validar datos de operación
+
+operation_service -> market_service: get_current_price(asset_symbol, currency)
+activate market_service
+
+market_service -> market_service: Verificar caché de precios
+alt Precio en caché válido
+    market_service --> operation_service: Precio desde caché
+else Precio no en caché o expirado
+    market_service -> alpha_vantage: GET /query?function=GLOBAL_QUOTE&symbol={symbol}
+    activate alpha_vantage
+    alpha_vantage --> market_service: {price, timestamp}
+    deactivate alpha_vantage
+    
+    market_service -> market_service: Almacenar precio en caché
+    market_service -> db: INSERT INTO asset_prices\n(symbol, price, timestamp)
+    activate db
+    db --> market_service: Precio almacenado
+    deactivate db
+    
+    market_service --> operation_service: Precio actualizado
+end
+deactivate market_service
+
+operation_service -> operation_repo: create_operation(operation_data)
+activate operation_repo
+
+operation_repo -> db: INSERT INTO operations\n(portfolio_id, asset_symbol, operation_type, quantity, price, ...)
+activate db
+db --> operation_repo: Operation creada
+deactivate db
+
+operation_repo --> operation_service: Operation object
+deactivate operation_repo
+
+operation_service -> operation_service: Actualizar posición en cartera\n(Recalcular precio promedio si existe posición)
+operation_service -> portfolio_repo: update_portfolio_balance(portfolio_id)
+activate portfolio_repo
+
+portfolio_repo -> db: UPDATE portfolios SET total_value = ...\nWHERE id = ?
+activate db
+db --> portfolio_repo: Portfolio actualizado
+deactivate db
+
+portfolio_repo --> operation_service: Portfolio actualizado
+deactivate portfolio_repo
+
+operation_service --> api: Operación registrada
+deactivate operation_service
+
+api --> user: 201 Created\n{id, portfolio_id, asset_symbol, quantity, price, total_amount, ...}
+deactivate api
+
+@enduml
+
+@startuml Diagrama de Secuencia - Consultar Detalles de Cartera con Métricas
+
+title Flujo de Consulta de Detalles de Cartera con Métricas
+
+actor Usuario as user
+participant "API Layer\n(Portfolio Endpoint)" as api
+participant "Auth Middleware" as auth
+participant "Portfolio Service" as portfolio_service
+participant "Portfolio Repository" as portfolio_repo
+participant "Market Data Service" as market_service
+participant "Alpha Vantage API" as alpha_vantage
+database "PostgreSQL" as db
+
+user -> api: GET /api/v1/portfolios/{portfolio_id}\nAuthorization: Bearer {token}
+activate api
+
+api -> auth: Validar token JWT
+activate auth
+auth --> api: Usuario autenticado (user_id)
+deactivate auth
+
+api -> portfolio_service: get_portfolio_details(portfolio_id, user_id)
+activate portfolio_service
+
+portfolio_service -> portfolio_repo: get_portfolio_by_id(portfolio_id, user_id)
+activate portfolio_repo
+
+portfolio_repo -> db: SELECT * FROM portfolios WHERE id = ? AND user_id = ?
+activate db
+db --> portfolio_repo: Portfolio data
+deactivate db
+
+portfolio_repo --> portfolio_service: Portfolio object
+deactivate portfolio_repo
+
+portfolio_service -> portfolio_service: Validar pertenencia de cartera al usuario
+portfolio_service -> portfolio_repo: get_portfolio_positions(portfolio_id)
+activate portfolio_repo
+
+portfolio_repo -> db: SELECT * FROM portfolio_assets\nWHERE portfolio_id = ?
+activate db
+db --> portfolio_repo: Posiciones de la cartera
+deactivate db
+
+portfolio_repo --> portfolio_service: Lista de posiciones
+deactivate portfolio_repo
+
+loop Para cada posición
+    portfolio_service -> market_service: get_current_price(asset_symbol, currency)
+    activate market_service
+    
+    market_service -> market_service: Verificar caché de precios
+    alt Precio en caché válido
+        market_service --> portfolio_service: Precio desde caché
+    else Precio no en caché o expirado
+        market_service -> alpha_vantage: GET /query?function=GLOBAL_QUOTE&symbol={symbol}
+        activate alpha_vantage
+        alpha_vantage --> market_service: {price, timestamp}
+        deactivate alpha_vantage
+        
+        market_service -> market_service: Almacenar precio en caché
+        market_service -> db: INSERT INTO asset_prices\n(symbol, price, timestamp)
+        activate db
+        db --> market_service: Precio almacenado
+        deactivate db
+        
+        market_service --> portfolio_service: Precio actualizado
+    end
+    deactivate market_service
+    
+    portfolio_service -> portfolio_service: Calcular valor actual de posición\n= quantity * current_price
+    portfolio_service -> portfolio_service: Calcular ganancia/pérdida\n= current_value - total_cost
+end
+
+portfolio_service -> portfolio_service: Calcular métricas totales de cartera\n- Valor total actualizado\n- Ganancia/pérdida total\n- Rendimiento porcentual
+
+portfolio_service --> api: Portfolio con métricas actualizadas
+deactivate portfolio_service
+
+api --> user: 200 OK\n{id, name, base_currency, total_value, total_cost,\ntotal_gain_loss, total_gain_loss_percent, positions: [...]}
+deactivate api
+
+@enduml
+
+@startuml Diagrama de Secuencia - Análisis con Inteligencia Artificial
+
+title Flujo de Análisis con Inteligencia Artificial
+
+actor Usuario as user
+participant "API Layer\n(Portfolio Endpoint)" as api
+participant "Auth Middleware" as auth
+participant "Portfolio Service" as portfolio_service
+participant "AI Module Service" as ai_service
+participant "Market Data Service" as market_service
+participant "Data Processor" as data_processor
+participant "AI Provider" as ai_provider
+participant "OpenAI API" as openai
+participant "Alpha Vantage API" as alpha_vantage
+database "PostgreSQL" as db
+database "Redis Cache" as cache
+
+user -> api: GET /api/v1/portfolios/{portfolio_id}/analytics\nAuthorization: Bearer {token}
+activate api
+
+api -> auth: Validar token JWT
+activate auth
+auth --> api: Usuario autenticado (user_id)
+deactivate auth
+
+api -> portfolio_service: get_portfolio_analytics(portfolio_id, user_id)
+activate portfolio_service
+
+portfolio_service -> portfolio_service: Validar pertenencia de cartera
+portfolio_service -> ai_service: generate_portfolio_analysis(portfolio_id)
+activate ai_service
+
+ai_service -> cache: check_cached_analysis(portfolio_id)
+activate cache
+cache --> ai_service: Resultado de caché
+deactivate cache
+
+alt Análisis en caché válido
+    ai_service --> portfolio_service: Análisis desde caché
+    portfolio_service --> api: Análisis retornado
+    api --> user: 200 OK\n{analysis, cached: true, ...}
+else Análisis no en caché o expirado
+    ai_service -> portfolio_service: get_portfolio_positions(portfolio_id)
+    activate portfolio_service
+    portfolio_service --> ai_service: Lista de posiciones con activos
+    deactivate portfolio_service
+    
+    loop Para cada activo en la cartera
+        ai_service -> market_service: get_historical_prices(asset_symbol, days=90)
+        activate market_service
+        
+        market_service -> market_service: Verificar caché de datos históricos
+        alt Datos históricos en caché
+            market_service -> db: SELECT * FROM asset_prices\nWHERE symbol = ? AND date >= ?
+            activate db
+            db --> market_service: Datos históricos almacenados
+            deactivate db
+        else Datos históricos no disponibles
+            market_service -> alpha_vantage: GET /query?function=TIME_SERIES_DAILY&symbol={symbol}
+            activate alpha_vantage
+            alpha_vantage --> market_service: Serie temporal de precios
+            deactivate alpha_vantage
+            
+            market_service -> db: INSERT INTO asset_prices\n(datos históricos)
+            activate db
+            db --> market_service: Datos almacenados
+            deactivate db
+        end
+        
+        market_service --> ai_service: Datos históricos de precios
+        deactivate market_service
+    end
+    
+    ai_service -> data_processor: process_market_data(historical_data)
+    activate data_processor
+    
+    data_processor -> data_processor: Calcular indicadores técnicos\n(RSI, MACD, Media móvil, etc.)
+    data_processor -> data_processor: Identificar patrones de precio
+    data_processor -> data_processor: Calcular métricas de volatilidad
+    data_processor -> data_processor: Analizar volumen
+    
+    data_processor --> ai_service: Datos procesados con indicadores
+    deactivate data_processor
+    
+    ai_service -> ai_provider: generate_analysis_prompt(processed_data, portfolio_info)
+    activate ai_provider
+    
+    ai_provider -> ai_provider: Construir prompt estructurado\ncon datos técnicos y contexto
+    ai_provider -> openai: POST /v1/chat/completions\n{prompt, model: "gpt-4", ...}
+    activate openai
+    
+    openai --> ai_provider: Respuesta con análisis descriptivo
+    deactivate openai
+    
+    ai_provider -> ai_provider: Procesar respuesta de OpenAI
+    ai_provider -> ai_provider: Agregar disclaimer de responsabilidad
+    ai_provider -> ai_provider: Formatear análisis en lenguaje natural
+    
+    ai_provider --> ai_service: Análisis completo generado
+    deactivate ai_provider
+    
+    ai_service -> db: INSERT INTO analysis\n(portfolio_id, analysis_text, generated_at)
+    activate db
+    db --> ai_service: Análisis almacenado
+    deactivate db
+    
+    ai_service -> cache: cache_analysis(portfolio_id, analysis, ttl=3600)
+    activate cache
+    cache --> ai_service: Análisis almacenado en caché
+    deactivate cache
+    
+    ai_service --> portfolio_service: Análisis generado
+    deactivate ai_service
+    
+    portfolio_service --> api: Análisis con IA
+    deactivate portfolio_service
+    
+    api --> user: 200 OK\n{analysis, generated_at, disclaimer, cached: false}
+    deactivate api
+end
+
+@enduml
+
+@startuml Diagrama de Secuencia - Registrar Operación de Venta
+
+title Flujo de Registro de Operación de Venta
+
+actor Usuario as user
+participant "API Layer\n(Operations Endpoint)" as api
+participant "Auth Middleware" as auth
+participant "Operation Service" as operation_service
+participant "Portfolio Repository" as portfolio_repo
+participant "Operation Repository" as operation_repo
+participant "Market Data Service" as market_service
+participant "Alpha Vantage API" as alpha_vantage
+database "PostgreSQL" as db
+
+user -> api: POST /api/v1/operations\nAuthorization: Bearer {token}\n{portfolio_id, asset_symbol, operation_type: "sell",\nquantity, price, currency, fees, date}
+activate api
+
+api -> auth: Validar token JWT
+activate auth
+auth --> api: Usuario autenticado (user_id)
+deactivate auth
+
+api -> api: Validar datos con Pydantic
+api -> operation_service: create_operation(operation_data, user_id)
+activate operation_service
+
+operation_service -> portfolio_repo: get_portfolio_by_id(portfolio_id, user_id)
+activate portfolio_repo
+
+portfolio_repo -> db: SELECT * FROM portfolios WHERE id = ? AND user_id = ?
+activate db
+db --> portfolio_repo: Portfolio data
+deactivate db
+
+portfolio_repo --> operation_service: Portfolio object
+deactivate portfolio_repo
+
+operation_service -> operation_service: Validar pertenencia de cartera al usuario
+operation_service -> portfolio_repo: get_portfolio_position(portfolio_id, asset_symbol)
+activate portfolio_repo
+
+portfolio_repo -> db: SELECT * FROM portfolio_assets\nWHERE portfolio_id = ? AND asset_symbol = ?
+activate db
+db --> portfolio_repo: Posición actual
+deactivate db
+
+portfolio_repo --> operation_service: Posición actual o null
+deactivate portfolio_repo
+
+alt Posición existe y cantidad suficiente
+    operation_service -> operation_service: Validar cantidad disponible\nquantity_available >= quantity
+    
+    operation_service -> operation_service: Calcular total_amount = (quantity * price) - fees
+    
+    operation_service -> market_service: get_current_price(asset_symbol, currency)
+    activate market_service
+    
+    market_service -> market_service: Verificar caché de precios
+    alt Precio en caché válido
+        market_service --> operation_service: Precio desde caché
+    else Precio no en caché
+        market_service -> alpha_vantage: GET /query?function=GLOBAL_QUOTE&symbol={symbol}
+        activate alpha_vantage
+        alpha_vantage --> market_service: {price, timestamp}
+        deactivate alpha_vantage
+        market_service --> operation_service: Precio actualizado
+    end
+    deactivate market_service
+    
+    operation_service -> operation_repo: create_operation(operation_data)
+    activate operation_repo
+    
+    operation_repo -> db: INSERT INTO operations\n(portfolio_id, asset_symbol, operation_type: "sell", quantity, ...)
+    activate db
+    db --> operation_repo: Operation creada
+    deactivate db
+    
+    operation_repo --> operation_service: Operation object
+    deactivate operation_repo
+    
+    operation_service -> operation_service: Actualizar posición en cartera\nReducir cantidad disponible\nRecalcular precio promedio (FIFO o promedio ponderado)
+    operation_service -> portfolio_repo: update_portfolio_balance(portfolio_id)
+    activate portfolio_repo
+    
+    portfolio_repo -> db: UPDATE portfolios SET total_value = ...\nUPDATE portfolio_assets SET quantity = ...\nWHERE id = ?
+    activate db
+    db --> portfolio_repo: Portfolio y posiciones actualizados
+    deactivate db
+    
+    portfolio_repo --> operation_service: Portfolio actualizado
+    deactivate portfolio_repo
+    
+    operation_service --> api: Operación de venta registrada
+    deactivate operation_service
+    
+    api --> user: 201 Created\n{id, operation_type: "sell", quantity, price, ...}
+else Posición no existe o cantidad insuficiente
+    operation_service --> api: Error: Cantidad insuficiente
+    deactivate operation_service
+    
+    api --> user: 400 Bad Request\n{error: "Cantidad insuficiente para venta"}
+end
+
+deactivate api
+
+@enduml
+

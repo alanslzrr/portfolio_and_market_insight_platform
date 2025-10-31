@@ -1,0 +1,212 @@
+@startuml Diagrama General del Proceso - Plataforma de Gestión de Carteras
+
+!theme plain
+skinparam activity {
+    BackgroundColor #E1F5FF
+    BorderColor #0066CC
+    FontColor #000000
+}
+skinparam note {
+    BackgroundColor #FFF9E6
+    BorderColor #FF9900
+}
+
+title Diagrama General del Proceso\nPlataforma de Gestión de Carteras y Comprensión del Mercado Asistida por IA
+
+start
+
+:Usuario accede al sistema;
+:¿Usuario registrado?;
+
+if (Usuario nuevo?) then (Sí)
+    :Registro de usuario;
+    :Validar datos (email, contraseña, nombre);
+    :Hash de contraseña con bcrypt;
+    :Crear cuenta no verificada;
+    :Enviar email de verificación;
+    :Usuario verifica email;
+    :Cuenta activada;
+else (No)
+endif
+
+:Usuario inicia sesión;
+:Validar credenciales;
+:Generar tokens JWT\n(access token 15 min, refresh token 7 días);
+:Usuario autenticado;
+
+partition "Operaciones Principales del Usuario" {
+    
+    :Usuario autenticado;
+    
+    repeat
+        :¿Qué operación desea realizar?;
+        
+        partition "Gestión de Carteras" {
+            if (Crear cartera?) then (Sí)
+                :Solicitar datos de cartera\n(nombre, moneda base);
+                :Validar nombre único por usuario;
+                :Crear cartera en base de datos;
+                :Inicializar métricas (valor_total = 0);
+                :Cartera creada exitosamente;
+            endif
+            
+            if (Consultar cartera?) then (Sí)
+                :Obtener cartera del usuario;
+                :Recuperar posiciones de la cartera;
+                :Obtener precios actualizados\npara cada activo;
+                partition "Obtención de Precios" {
+                    :¿Precio en caché?;
+                    if (Sí) then
+                        :Obtener precio desde caché;
+                    else (No)
+                        :Solicitar precio a Alpha Vantage API;
+                        :Almacenar precio en caché;
+                        :Guardar precio histórico en BD;
+                    endif
+                }
+                :Calcular valor actual de cada posición;
+                :Calcular métricas totales:\n- Valor total\n- Ganancia/pérdida\n- Rendimiento %;
+                :Retornar información de cartera;
+            endif
+            
+            if (Solicitar análisis con IA?) then (Sí)
+                partition "Análisis con Inteligencia Artificial" {
+                    :Verificar análisis en caché;
+                    if (¿Análisis válido en caché?) then (Sí)
+                        :Retornar análisis desde caché;
+                    else (No)
+                        :Obtener posiciones de la cartera;
+                        :Para cada activo en la cartera;
+                        repeat
+                            :Obtener datos históricos de precios\n(últimos 90 días);
+                            :¿Datos históricos en BD?;
+                            if (Sí) then
+                                :Usar datos históricos almacenados;
+                            else (No)
+                                :Solicitar datos a Alpha Vantage API;
+                                :Almacenar datos históricos en BD;
+                            endif
+                        repeat while (¿Más activos?) is (Sí)
+                        :Fin del procesamiento de activos;
+                        
+                        :Procesar datos históricos;
+                        :Calcular indicadores técnicos:\n- RSI\n- MACD\n- Medias móviles\n- Volatilidad;
+                        :Identificar patrones de precio;
+                        :Generar prompt estructurado con datos;
+                        :Enviar prompt a OpenAI API;
+                        :Generar análisis descriptivo en lenguaje natural;
+                        :Agregar disclaimer de responsabilidad;
+                        :Almacenar análisis en BD;
+                        :Almacenar análisis en caché (TTL 1 hora);
+                        :Retornar análisis al usuario;
+                    endif
+                }
+            endif
+        }
+        
+        partition "Gestión de Operaciones" {
+            if (Registrar operación de compra?) then (Sí)
+                :Solicitar datos de operación:\n(cartera, activo, cantidad, precio, comisiones);
+                :Validar datos de entrada;
+                :Validar pertenencia de cartera al usuario;
+                :Obtener precio actual del activo;
+                :Calcular total_amount = (cantidad × precio) + comisiones;
+                :Crear registro de operación;
+                :Actualizar posición en cartera\n(crear o actualizar PortfolioAsset);
+                :Recalcular precio promedio de compra;
+                :Actualizar balance de la cartera;
+                :Operación registrada exitosamente;
+            endif
+            
+            if (Registrar operación de venta?) then (Sí)
+                :Solicitar datos de operación:\n(cartera, activo, cantidad, precio, comisiones);
+                :Validar datos de entrada;
+                :Validar pertenencia de cartera al usuario;
+                :Verificar posición existente;
+                if (¿Cantidad suficiente disponible?) then (Sí)
+                    :Obtener precio actual del activo;
+                    :Calcular total_amount = (cantidad × precio) - comisiones;
+                    :Crear registro de operación;
+                    :Actualizar posición en cartera\n(reducir cantidad disponible);
+                    :Recalcular precio promedio (FIFO o promedio ponderado);
+                    :Actualizar balance de la cartera;
+                    :Operación de venta registrada exitosamente;
+                else (No)
+                    :Error: Cantidad insuficiente;
+                    :Informar error al usuario;
+                endif
+            endif
+            
+            if (Consultar operaciones?) then (Sí)
+                :Aplicar filtros opcionales:\n(cartera, activo, tipo, fecha);
+                :Obtener operaciones de la base de datos;
+                :Retornar lista de operaciones;
+            endif
+            
+            if (Importar operaciones desde CSV?) then (Sí)
+                :Leer archivo CSV;
+                :Validar formato y datos;
+                :Procesar cada operación;
+                :Crear operaciones en lote;
+                :Retornar resumen de importación;
+            endif
+        }
+        
+        partition "Gestión de Usuario" {
+            if (Actualizar perfil?) then (Sí)
+                :Solicitar datos de actualización;
+                :Validar datos;
+                :Actualizar perfil en BD;
+                :Perfil actualizado;
+            endif
+            
+            if (Cambiar contraseña?) then (Sí)
+                :Validar contraseña actual;
+                :Hash de nueva contraseña;
+                :Actualizar contraseña en BD;
+                :Contraseña cambiada;
+            endif
+        }
+        
+        if (¿Renovar token de acceso?) then (Sí)
+            :Validar refresh token;
+            :Generar nuevo access token;
+            :Retornar nuevo token;
+        endif
+        
+        if (¿Cerrar sesión?) then (Sí)
+            :Invalidar refresh token;
+            :Cerrar sesión;
+            stop
+        endif
+        
+    repeat while (¿Continuar usando el sistema?) is (Sí)
+    :Usuario decide salir del sistema;
+}
+
+partition "Procesos en Segundo Plano" {
+    :Sincronización periódica de precios;
+    :Actualización de caché de precios;
+    :Limpieza de análisis expirados;
+    :Gestión de rate limiting de APIs externas;
+}
+
+note right
+    **Integraciones Externas:**
+    - Alpha Vantage API: Datos de mercado
+    - OpenAI API: Análisis con IA
+    - Redis: Caché de precios y análisis
+    - PostgreSQL: Almacenamiento persistente
+    
+    **Medidas de Seguridad:**
+    - Autenticación JWT
+    - Validación de datos con Pydantic
+    - Hashing de contraseñas (bcrypt)
+    - Rate limiting en APIs externas
+    - Caché para optimización
+end note
+
+stop
+
+@enduml
+

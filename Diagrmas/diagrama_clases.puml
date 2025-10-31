@@ -1,0 +1,572 @@
+@startuml Diagrama de Clases - Plataforma de Gestión de Carteras
+
+' =========================================================
+' Configuración
+' =========================================================
+!theme plain
+skinparam classAttributeIconSize 0
+title Diagrama de Clases\nPlataforma de Gestión de Carteras y Comprensión del Mercado Asistida por IA
+
+' =========================================================
+' CAPA DE MODELOS (Domain Models)
+' =========================================================
+package "Domain Models" {
+
+    class User {
+        - id: UUID
+        - email: str
+        - password_hash: str
+        - full_name: str
+        - is_active: bool
+        - is_verified: bool
+        - email_verification_token: str
+        - created_at: datetime
+        - updated_at: datetime
+        - last_login: datetime
+        --
+        + verify_password(password: str): bool
+        + hash_password(password: str): str
+    }
+
+    class UserProfile {
+        - id: UUID
+        - user_id: UUID
+        - default_currency: str
+        - timezone: str
+        - language: str
+        - preferences: JSON
+        - created_at: datetime
+        - updated_at: datetime
+    }
+
+    class UserSession {
+        - id: UUID
+        - user_id: UUID
+        - refresh_token: str
+        - expires_at: datetime
+        - created_at: datetime
+        - is_active: bool
+    }
+
+    class Portfolio {
+        - id: UUID
+        - user_id: UUID
+        - name: str
+        - base_currency: str
+        - description: str
+        - total_value: Decimal
+        - total_cost: Decimal
+        - total_gain_loss: Decimal
+        - total_gain_loss_percent: Decimal
+        - created_at: datetime
+        - updated_at: datetime
+        --
+        + calculate_metrics(): dict
+        + update_balance(): void
+    }
+
+    class PortfolioAsset {
+        - id: UUID
+        - portfolio_id: UUID
+        - asset_symbol: str
+        - quantity: Decimal
+        - average_price: Decimal
+        - total_cost: Decimal
+        - current_price: Decimal
+        - current_value: Decimal
+        - gain_loss: Decimal
+        - gain_loss_percent: Decimal
+        - created_at: datetime
+        - updated_at: datetime
+        --
+        + calculate_position_value(): Decimal
+        + update_current_price(price: Decimal): void
+    }
+
+    class Operation {
+        - id: UUID
+        - portfolio_id: UUID
+        - asset_symbol: str
+        - operation_type: str
+        - quantity: Decimal
+        - price: Decimal
+        - currency: str
+        - fees: Decimal
+        - total_amount: Decimal
+        - date: datetime
+        - notes: str
+        - created_at: datetime
+        - updated_at: datetime
+        --
+        + calculate_total(): Decimal
+        + validate_operation(): bool
+    }
+
+    class Asset {
+        - id: UUID
+        - symbol: str
+        - name: str
+        - asset_type: str
+        - currency: str
+        - exchange: str
+        - metadata: JSON
+        - created_at: datetime
+        - updated_at: datetime
+    }
+
+    class AssetPrice {
+        - id: UUID
+        - asset_symbol: str
+        - price: Decimal
+        - currency: str
+        - date: datetime
+        - timestamp: datetime
+        - source: str
+        --
+        + is_valid(): bool
+    }
+
+    class Analysis {
+        - id: UUID
+        - portfolio_id: UUID
+        - asset_symbol: str
+        - analysis_type: str
+        - analysis_text: str
+        - technical_indicators: JSON
+        - generated_at: datetime
+        - expires_at: datetime
+        - cached: bool
+        --
+        + is_expired(): bool
+        + get_disclaimer(): str
+    }
+
+    class AnalysisRequest {
+        - id: UUID
+        - user_id: UUID
+        - asset_symbol: str
+        - portfolio_id: UUID
+        - status: str
+        - created_at: datetime
+        - completed_at: datetime
+    }
+
+    ' Relaciones entre modelos
+    User ||--o{ UserProfile : "tiene"
+    User ||--o{ UserSession  : "tiene"
+    User ||--o{ Portfolio    : "posee"
+    User ||--o{ AnalysisRequest : "solicita"
+
+    Portfolio     ||--o{ PortfolioAsset : "contiene"
+    Portfolio     ||--o{ Operation      : "registra"
+    Portfolio     ||--o{ Analysis       : "tiene"
+
+    Operation     }o--|| Asset      : "referencia"
+    PortfolioAsset }o--|| Asset     : "referencia"
+    AssetPrice    }o--|| Asset      : "histórico"
+    Analysis      }o--|| Asset      : "analiza"
+}
+
+' =========================================================
+' CAPA DE REPOSITORIOS (Repository Layer)
+' =========================================================
+package "Repository Layer" {
+
+    abstract class BaseRepository {
+        # db: Session
+        --
+        + create(entity: T): T
+        + get_by_id(id: UUID): T
+        + update(entity: T): T
+        + delete(id: UUID): bool
+        + list(limit: int, offset: int): List[T]
+    }
+
+    class UserRepository extends BaseRepository {
+        + get_by_email(email: str): User
+        + get_user_profile(user_id: UUID): UserProfile
+        + update_profile(user_id: UUID, data: dict): UserProfile
+        + get_active_sessions(user_id: UUID): List[UserSession]
+        + deactivate_session(session_id: UUID): bool
+    }
+
+    class PortfolioRepository extends BaseRepository {
+        + get_by_user_id(user_id: UUID): List[Portfolio]
+        + get_portfolio_positions(portfolio_id: UUID): List[PortfolioAsset]
+        + get_portfolio_operations(portfolio_id: UUID): List[Operation]
+        + update_portfolio_balance(portfolio_id: UUID): Portfolio
+        + calculate_portfolio_metrics(portfolio_id: UUID): dict
+    }
+
+    class OperationRepository extends BaseRepository {
+        + get_by_portfolio(portfolio_id: UUID): List[Operation]
+        + get_by_asset(asset_symbol: str): List[Operation]
+        + filter_by_date_range(start: datetime, end: datetime): List[Operation]
+        + filter_by_type(operation_type: str): List[Operation]
+        + get_portfolio_statistics(portfolio_id: UUID): dict
+    }
+
+    class AssetRepository extends BaseRepository {
+        + get_by_symbol(symbol: str): Asset
+        + search_assets(query: str): List[Asset]
+        + get_historical_prices(symbol: str, days: int): List[AssetPrice]
+        + get_latest_price(symbol: str): AssetPrice
+        + sync_asset_data(asset: Asset): Asset
+    }
+
+    class AnalysisRepository extends BaseRepository {
+        + get_by_portfolio(portfolio_id: UUID): List[Analysis]
+        + get_by_asset(asset_symbol: str): List[Analysis]
+        + get_cached_analysis(portfolio_id: UUID, asset_symbol: str): Analysis
+        + invalidate_cache(portfolio_id: UUID): bool
+    }
+}
+
+' =========================================================
+' CAPA DE SERVICIOS (Service Layer)
+' =========================================================
+package "Service Layer" {
+
+    class AuthService {
+        - user_repo: UserRepository
+        - jwt_handler: JWTHandler
+        - password_hasher: PasswordHasher
+        --
+        + register_user(email: str, password: str, full_name: str): User
+        + authenticate_user(email: str, password: str): dict
+        + verify_email(token: str): bool
+        + refresh_token(refresh_token: str): dict
+        + logout(user_id: UUID, refresh_token: str): bool
+        + forgot_password(email: str): bool
+        + reset_password(token: str, new_password: str): bool
+    }
+
+    class PortfolioService {
+        - portfolio_repo: PortfolioRepository
+        - operation_repo: OperationRepository
+        - market_service: MarketDataService
+        --
+        + create_portfolio(user_id: UUID, data: dict): Portfolio
+        + get_portfolio(user_id: UUID, portfolio_id: UUID): Portfolio
+        + update_portfolio(user_id: UUID, portfolio_id: UUID, data: dict): Portfolio
+        + delete_portfolio(user_id: UUID, portfolio_id: UUID): bool
+        + get_portfolio_details(portfolio_id: UUID, user_id: UUID): dict
+        + calculate_portfolio_metrics(portfolio_id: UUID): dict
+    }
+
+    class OperationService {
+        - operation_repo: OperationRepository
+        - portfolio_repo: PortfolioRepository
+        - portfolio_service: PortfolioService
+        - market_service: MarketDataService
+        --
+        + create_operation(user_id: UUID, data: dict): Operation
+        + get_operations(user_id: UUID, filters: dict): List[Operation]
+        + update_operation(user_id: UUID, operation_id: UUID, data: dict): Operation
+        + delete_operation(user_id: UUID, operation_id: UUID): bool
+        + import_operations_csv(user_id: UUID, file: File): List[Operation]
+        + export_operations_csv(user_id: UUID, filters: dict): File
+        + validate_operation_quantity(portfolio_id: UUID, asset_symbol: str, quantity: Decimal): bool
+    }
+
+    class MarketDataService {
+        - asset_repo: AssetRepository
+        - alpha_vantage_client: AlphaVantageClient
+        - cache: RedisCache
+        --
+        + get_current_price(symbol: str, currency: str): Decimal
+        + get_historical_prices(symbol: str, days: int): List[AssetPrice]
+        + get_asset_info(symbol: str): Asset
+        + sync_market_data(symbol: str): Asset
+        + refresh_price_cache(symbol: str): AssetPrice
+    }
+
+    class AIService {
+        - analysis_repo: AnalysisRepository
+        - data_processor: DataProcessor
+        - ai_provider: OpenAIClient
+        - market_service: MarketDataService
+        - cache: RedisCache
+        --
+        + generate_portfolio_analysis(portfolio_id: UUID): Analysis
+        + generate_asset_analysis(asset_symbol: str): Analysis
+        + get_cached_analysis(portfolio_id: UUID, asset_symbol: str): Analysis
+        + process_market_data(historical_data: List[AssetPrice]): dict
+    }
+
+    class UserService {
+        - user_repo: UserRepository
+        --
+        + get_user_profile(user_id: UUID): UserProfile
+        + update_user_profile(user_id: UUID, data: dict): UserProfile
+        + change_password(user_id: UUID, current_password: str, new_password: str): bool
+        + delete_user_account(user_id: UUID): bool
+        + get_user_activity(user_id: UUID): List[dict]
+    }
+}
+
+' =========================================================
+' CAPA DE API (Presentation Layer)
+' =========================================================
+package "API Layer" {
+
+    class AuthEndpoint {
+        - auth_service: AuthService
+        --
+        + register(request: UserRegister): Response
+        + login(request: UserLogin): TokenResponse
+        + refresh_token(request: RefreshTokenRequest): TokenResponse
+        + logout(token: str): Response
+        + verify_email(token: str): Response
+        + forgot_password(email: str): Response
+        + reset_password(request: PasswordReset): Response
+    }
+
+    class PortfolioEndpoint {
+        - portfolio_service: PortfolioService
+        - auth_dependency: AuthDependency
+        --
+        + list_portfolios(user: User): List[PortfolioResponse]
+        + create_portfolio(user: User, request: PortfolioCreate): PortfolioResponse
+        + get_portfolio(user: User, portfolio_id: UUID): PortfolioResponse
+        + update_portfolio(user: User, portfolio_id: UUID, request: PortfolioUpdate): PortfolioResponse
+        + delete_portfolio(user: User, portfolio_id: UUID): Response
+        + get_positions(user: User, portfolio_id: UUID): List[PortfolioAssetResponse]
+        + get_operations(user: User, portfolio_id: UUID): List[OperationResponse]
+        + get_performance(user: User, portfolio_id: UUID): PerformanceResponse
+        + get_analytics(user: User, portfolio_id: UUID): AnalysisResponse
+    }
+
+    class OperationEndpoint {
+        - operation_service: OperationService
+        - auth_dependency: AuthDependency
+        --
+        + list_operations(user: User, filters: dict): List[OperationResponse]
+        + create_operation(user: User, request: OperationCreate): OperationResponse
+        + get_operation(user: User, operation_id: UUID): OperationResponse
+        + update_operation(user: User, operation_id: UUID, request: OperationUpdate): OperationResponse
+        + delete_operation(user: User, operation_id: UUID): Response
+        + import_operations(user: User, file: File): Response
+        + export_operations(user: User, filters: dict): File
+    }
+
+    class UserEndpoint {
+        - user_service: UserService
+        - auth_dependency: AuthDependency
+        --
+        + get_profile(user: User): UserProfileResponse
+        + update_profile(user: User, request: UserUpdate): UserProfileResponse
+        + change_password(user: User, request: PasswordChange): Response
+        + delete_account(user: User): Response
+        + get_activity(user: User): List[ActivityResponse]
+    }
+}
+
+' =========================================================
+' CAPA DE SCHEMAS (Pydantic Schemas)
+' =========================================================
+package "Schemas" {
+
+    class UserRegister {
+        + email: str
+        + password: str
+        + full_name: str
+    }
+
+    class UserLogin {
+        + email: str
+        + password: str
+    }
+
+    class TokenResponse {
+        + access_token: str
+        + refresh_token: str
+        + token_type: str
+        + expires_in: int
+    }
+
+    class PortfolioCreate {
+        + name: str
+        + base_currency: str
+        + description: Optional[str]
+    }
+
+    class PortfolioResponse {
+        + id: UUID
+        + name: str
+        + base_currency: str
+        + total_value: Decimal
+        + total_gain_loss: Decimal
+        + total_gain_loss_percent: Decimal
+    }
+
+    class OperationCreate {
+        + portfolio_id: UUID
+        + asset_symbol: str
+        + operation_type: str
+        + quantity: Decimal
+        + price: Decimal
+        + currency: str
+        + fees: Decimal
+        + date: datetime
+        + notes: Optional[str]
+    }
+
+    class OperationResponse {
+        + id: UUID
+        + portfolio_id: UUID
+        + asset_symbol: str
+        + operation_type: str
+        + quantity: Decimal
+        + price: Decimal
+        + total_amount: Decimal
+    }
+
+    class AnalysisResponse {
+        + id: UUID
+        + analysis_text: str
+        + technical_indicators: dict
+        + generated_at: datetime
+        + disclaimer: str
+    }
+}
+
+' =========================================================
+' SERVICIOS EXTERNOS Y UTILIDADES
+' =========================================================
+package "External Services & Utilities" {
+
+    class AlphaVantageClient {
+        - api_key: str
+        - base_url: str
+        --
+        + get_quote(symbol: str): dict
+        + get_time_series(symbol: str, function: str): dict
+        + get_asset_info(symbol: str): dict
+        + check_rate_limit(): bool
+    }
+
+    class OpenAIClient {
+        - api_key: str
+        - base_url: str
+        --
+        + generate_analysis(prompt: str): str
+        + optimize_prompt(data: dict): str
+        + check_token_limit(prompt: str): bool
+    }
+
+    class JWTHandler {
+        - secret_key: str
+        - algorithm: str
+        --
+        + create_access_token(user_id: UUID): str
+        + create_refresh_token(user_id: UUID): str
+        + verify_token(token: str): dict
+        + decode_token(token: str): dict
+    }
+
+    class PasswordHasher {
+        --
+        + hash_password(password: str): str
+        + verify_password(password: str, password_hash: str): bool
+    }
+
+    class DataProcessor {
+        --
+        + calculate_technical_indicators(data: List[AssetPrice]): dict
+        + identify_patterns(data: List[AssetPrice]): dict
+        + calculate_volatility(data: List[AssetPrice]): Decimal
+        + analyze_volume(data: List[AssetPrice]): dict
+    }
+
+    class RedisCache {
+        - redis_client: Redis
+        --
+        + get(key: str): Optional[Any]
+        + set(key: str, value: Any, ttl: int): bool
+        + delete(key: str): bool
+        + exists(key: str): bool
+    }
+}
+
+' =========================================================
+' RELACIONES ENTRE CAPAS
+' =========================================================
+
+' API Layer -> Service Layer
+AuthEndpoint      --> AuthService
+PortfolioEndpoint --> PortfolioService
+OperationEndpoint --> OperationService
+UserEndpoint      --> UserService
+
+' Service Layer -> Repository Layer
+AuthService       --> UserRepository
+PortfolioService  --> PortfolioRepository
+PortfolioService  --> OperationRepository
+OperationService  --> OperationRepository
+OperationService  --> PortfolioRepository
+MarketDataService --> AssetRepository
+AIService         --> AnalysisRepository
+UserService       --> UserRepository
+
+' Service Layer -> External Services
+MarketDataService --> AlphaVantageClient
+MarketDataService --> RedisCache
+AIService         --> OpenAIClient
+AIService         --> DataProcessor
+AIService         --> RedisCache
+AIService         --> MarketDataService
+
+' Service Layer -> Utilities
+AuthService       --> JWTHandler
+AuthService       --> PasswordHasher
+
+' Repository Layer -> Domain Models
+UserRepository       ..> User
+PortfolioRepository  ..> Portfolio
+PortfolioRepository  ..> PortfolioAsset
+OperationRepository  ..> Operation
+AssetRepository      ..> Asset
+AssetRepository      ..> AssetPrice
+AnalysisRepository   ..> Analysis
+
+' API Layer -> Schemas
+AuthEndpoint      ..> UserRegister
+AuthEndpoint      ..> UserLogin
+AuthEndpoint      ..> TokenResponse
+PortfolioEndpoint ..> PortfolioCreate
+PortfolioEndpoint ..> PortfolioResponse
+OperationEndpoint ..> OperationCreate
+OperationEndpoint ..> OperationResponse
+
+' =========================================================
+' Notas
+' =========================================================
+note right of BaseRepository
+  Patrón Repository:
+  - Abstrae el acceso a datos
+  - Facilita testing y mantenimiento
+end note
+
+note right of AuthService
+  Lógica de negocio:
+  - Validación de credenciales
+  - Generación de tokens
+  - Gestión de sesiones
+end note
+
+note right of MarketDataService
+  Integración externa:
+  - Alpha Vantage API
+  - Caché de precios
+  - Fallback a datos históricos
+end note
+
+note right of AIService
+  Procesamiento con IA:
+  - Procesamiento de datos
+  - Generación de análisis
+  - Caché de resultados
+end note
+
+@enduml

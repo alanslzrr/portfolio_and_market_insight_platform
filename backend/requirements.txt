@@ -1,0 +1,3 @@
+# Este archivo definirá las dependencias de Python necesarias para el backend
+# Incluirá FastAPI, SQLAlchemy, Pydantic, y otras librerías utilizadas
+

@@ -1,0 +1,138 @@
+@startuml Diagrama de Casos de Uso - Plataforma de Gestión de Carteras
+
+!theme plain
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+
+title Diagrama de Casos de Uso\nPlataforma de Gestión de Carteras y Comprensión del Mercado Asistida por IA
+
+left to right direction
+
+' Actores principales
+actor Usuario as user
+actor "Alpha Vantage API" as alpha_vantage
+actor "OpenAI API" as openai
+
+' Sistema principal
+rectangle "Plataforma de Gestión de Carteras" {
+  
+  ' Paquete de Autenticación y Gestión de Usuario
+  package "Autenticación y Usuario" {
+    usecase UC01 as "Registrarse"
+    usecase UC02 as "Verificar email"
+    usecase UC03 as "Iniciar sesión"
+    usecase UC04 as "Cerrar sesión"
+    usecase UC05 as "Renovar token"
+    usecase UC06 as "Recuperar contraseña"
+    usecase UC07 as "Restablecer contraseña"
+    usecase UC08 as "Ver perfil"
+    usecase UC09 as "Actualizar perfil"
+    usecase UC10 as "Cambiar contraseña"
+    usecase UC11 as "Eliminar cuenta"
+    usecase UC12 as "Ver historial de actividad"
+  }
+  
+  ' Paquete de Gestión de Carteras
+  package "Gestión de Carteras" {
+    usecase UC13 as "Crear cartera"
+    usecase UC14 as "Listar carteras"
+    usecase UC15 as "Ver detalles de cartera"
+    usecase UC16 as "Actualizar cartera"
+    usecase UC17 as "Eliminar cartera"
+    usecase UC18 as "Ver posiciones de cartera"
+    usecase UC19 as "Ver operaciones de cartera"
+    usecase UC20 as "Ver rendimiento de cartera"
+    usecase UC21 as "Obtener análisis con IA de cartera"
+  }
+  
+  ' Paquete de Gestión de Operaciones
+  package "Gestión de Operaciones" {
+    usecase UC22 as "Registrar operación de compra"
+    usecase UC23 as "Registrar operación de venta"
+    usecase UC24 as "Listar operaciones"
+    usecase UC25 as "Ver detalles de operación"
+    usecase UC26 as "Actualizar operación"
+    usecase UC27 as "Eliminar operación"
+    usecase UC28 as "Importar operaciones desde CSV"
+    usecase UC29 as "Exportar operaciones a CSV"
+  }
+  
+  ' Paquete de Datos de Mercado
+  package "Datos de Mercado" {
+    usecase UC30 as "Obtener cotizaciones en tiempo real"
+    usecase UC31 as "Obtener datos históricos de precios"
+    usecase UC32 as "Consultar información de activos"
+  }
+  
+  ' Paquete de Análisis con IA
+  package "Análisis con IA" {
+    usecase UC33 as "Solicitar análisis de activo"
+    usecase UC34 as "Solicitar análisis de cartera"
+    usecase UC35 as "Ver historial de análisis"
+  }
+}
+
+' Relaciones del actor Usuario con casos de uso
+user --> UC01 : Registrarse
+user --> UC02 : Verificar email
+user --> UC03 : Iniciar sesión
+user --> UC04 : Cerrar sesión
+user --> UC05 : Renovar token
+user --> UC06 : Recuperar contraseña
+user --> UC07 : Restablecer contraseña
+user --> UC08 : Ver perfil
+user --> UC09 : Actualizar perfil
+user --> UC10 : Cambiar contraseña
+user --> UC11 : Eliminar cuenta
+user --> UC12 : Ver historial de actividad
+user --> UC13 : Crear cartera
+user --> UC14 : Listar carteras
+user --> UC15 : Ver detalles de cartera
+user --> UC16 : Actualizar cartera
+user --> UC17 : Eliminar cartera
+user --> UC18 : Ver posiciones de cartera
+user --> UC19 : Ver operaciones de cartera
+user --> UC20 : Ver rendimiento de cartera
+user --> UC21 : Obtener análisis con IA de cartera
+user --> UC22 : Registrar operación de compra
+user --> UC23 : Registrar operación de venta
+user --> UC24 : Listar operaciones
+user --> UC25 : Ver detalles de operación
+user --> UC26 : Actualizar operación
+user --> UC27 : Eliminar operación
+user --> UC28 : Importar operaciones desde CSV
+user --> UC29 : Exportar operaciones a CSV
+user --> UC30 : Obtener cotizaciones en tiempo real
+user --> UC31 : Obtener datos históricos de precios
+user --> UC32 : Consultar información de activos
+user --> UC33 : Solicitar análisis de activo
+user --> UC34 : Solicitar análisis de cartera
+user --> UC35 : Ver historial de análisis
+
+' Relaciones con sistemas externos
+UC30 ..> alpha_vantage : <<include>>\nObtiene datos
+UC31 ..> alpha_vantage : <<include>>\nObtiene datos
+UC32 ..> alpha_vantage : <<include>>\nObtiene datos
+UC33 ..> openai : <<include>>\nGenera análisis
+UC34 ..> openai : <<include>>\nGenera análisis
+UC21 ..> openai : <<include>>\nGenera análisis
+
+' Relaciones de dependencia entre casos de uso
+UC01 ..> UC02 : <<include>>\nRequiere verificación
+UC22 ..> UC30 : <<include>>\nActualiza precios
+UC23 ..> UC30 : <<include>>\nActualiza precios
+UC15 ..> UC30 : <<include>>\nCalcula métricas
+UC20 ..> UC30 : <<include>>\nCalcula rendimiento
+UC33 ..> UC31 : <<include>>\nRequiere datos históricos
+UC34 ..> UC31 : <<include>>\nRequiere datos históricos
+UC21 ..> UC31 : <<include>>\nRequiere datos históricos
+
+' Notas importantes
+note right of UC01 : El usuario debe proporcionar\nemail, contraseña y nombre completo
+note right of UC13 : La cartera requiere\nnombre y moneda base
+note right of UC22 : Valida cantidad disponible\ny actualiza posiciones
+note right of UC23 : Valida cantidad disponible\ny actualiza posiciones
+note right of UC33 : Procesa datos históricos,\ncalcula indicadores técnicos\ny genera análisis con IA
+
+@enduml
+
