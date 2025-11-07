@@ -88,22 +88,6 @@ class User(Base):
         """
         return pwd_context.verify(password, self.password_hash)
     
-    @staticmethod
-    def hash_password(password: str) -> str:
-        """
-        genera un hash bcrypt de la password.
-        
-        metodo estatico porque no necesita acceso a la instancia.
-        se usa al crear o actualizar passwords.
-        
-        args:
-            password: password en texto plano
-            
-        returns:
-            hash bcrypt de la password
-        """
-        return pwd_context.hash(password)
-    
     def __repr__(self) -> str:
         return f"<User(email='{self.email}', active={self.is_active})>"
 

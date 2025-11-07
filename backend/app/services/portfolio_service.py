@@ -157,8 +157,19 @@ class PortfolioService:
             
         returns:
             operacion creada
+            
+        raises:
+            ValueError: si intenta vender mas de lo disponible
         """
         from datetime import datetime
+        
+        # validar cantidad en SELL
+        if operation_type == OperationType.SELL:
+            position = self.portfolio_repo.get_position(portfolio_id, asset_symbol.upper())
+            if not position:
+                raise ValueError(f"no existe posicion de {asset_symbol}")
+            if position.quantity < quantity:
+                raise ValueError(f"cantidad insuficiente de {asset_symbol}")
         
         # crear operacion
         operation = Operation(
