@@ -1,4 +1,47 @@
-# Modelos de Dominio
+"""
+Modelos de dominio (ORM).
+
+Este paquete contiene todos los modelos de SQLAlchemy que representan
+las entidades del dominio de negocio.
+
+Estructura:
+- user.py: Usuario, perfil y sesiones
+- portfolio.py: Carteras y posiciones de activos
+- operation.py: Operaciones de compra/venta
+- asset.py: Catálogo de activos y precios
+- analysis.py: Análisis generados por IA
+
+Todos los modelos heredan de Base (declarative_base de SQLAlchemy)
+y se migran a la base de datos usando Alembic.
+"""
+from app.models.user import User, UserProfile, UserSession
+from app.models.portfolio import Portfolio, PortfolioAsset
+from app.models.operation import Operation, OperationType
+from app.models.asset import Asset, AssetPrice, AssetType
+from app.models.analysis import Analysis, AnalysisRequest, AnalysisType, AnalysisStatus
+
+__all__ = [
+    # User models
+    "User",
+    "UserProfile",
+    "UserSession",
+    # Portfolio models
+    "Portfolio",
+    "PortfolioAsset",
+    # Operation models
+    "Operation",
+    "OperationType",
+    # Asset models
+    "Asset",
+    "AssetPrice",
+    "AssetType",
+    # Analysis models
+    "Analysis",
+    "AnalysisRequest",
+    "AnalysisType",
+    "AnalysisStatus",
+]
+
 
 Este módulo contiene todas las entidades del dominio representadas como modelos SQLAlchemy. Estos modelos definen la estructura de las tablas de la base de datos y las relaciones entre ellas.
 

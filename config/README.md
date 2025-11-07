@@ -44,7 +44,7 @@ Las variables de entorno principales incluyen:
 
 ## Seguridad
 
-- Los archivos `.env` con valores reales NO deben incluirse en control de versiones
+- Los archivos `.env` con valores reales NO vamos a incluirlas en control de versiones
 - Solo `.env.example` debe estar en el repositorio
 - Las variables de entorno de producción deben gestionarse mediante secretos seguros
 - Las claves API deben mantenerse seguras y rotarse periódicamente
