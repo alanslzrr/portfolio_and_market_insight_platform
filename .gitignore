@@ -52,3 +52,5 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+pytest.ini
+
