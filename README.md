@@ -8,6 +8,50 @@ El objetivo principal es construir una API REST funcional aplicando patrones de 
 
 ---
 
+## Instalación y Configuración de Base de Datos
+
+Para configurar PostgreSQL y la base de datos del proyecto, sigue estos pasos. Asume que ya tienes Python y el entorno virtual configurados.
+
+### 1. Instalar PostgreSQL
+```bash
+brew install postgresql
+```
+
+### 2. Iniciar PostgreSQL como Servicio
+```bash
+brew services start postgresql
+```
+
+### 3. Crear la Base de Datos
+```bash
+createdb portfolio_db
+```
+
+### 4. Configurar Variables de Entorno
+Edita el archivo `config/.env` (o créalo si no existe) con la conexión a PostgreSQL y las API keys:
+```
+DATABASE_URL=postgresql://username:password@localhost:5432/portfolio_db
+ALPHA_VANTAGE_API_KEY=tu_api_key_aqui
+OPENAI_API_KEY=tu_api_key_aqui
+```
+Reemplaza `username` y `password` con tus credenciales de PostgreSQL (por defecto, username es tu usuario de macOS, password puede estar vacío inicialmente).
+
+**Nota sobre API Keys:**
+- ALPHA_VANTAGE_API_KEY: Obtén una clave gratuita en https://www.alphavantage.co/support/#api-key
+- OPENAI_API_KEY: Obtén una clave en https://platform.openai.com/api-keys
+- Ambas API keys son opcionales. Sin ellas, esas funcionalidades específicas no estarán disponibles pero el resto del sistema funcionará normalmente.
+
+### 5. Ejecutar Migraciones con Alembic
+```bash
+cd backend
+alembic upgrade head
+```
+
+### Verificación
+- Para verificar que PostgreSQL esté corriendo: `brew services list`
+- Para detener PostgreSQL: `brew services stop postgresql`
+- Si hay errores de conexión, se debe revisar que la DATABASE_URL sea correcta y que la DB exista.
+
 ## Aclaraciones Críticas del Sistema
 
 Al definir la arquitectura del sistema, tomamos decisiones importantes que afectan el diseño y la implementación. Documentamos estas decisiones aquí para mantener claridad sobre el alcance y las limitaciones del proyecto.
@@ -18,7 +62,7 @@ Decidimos que la verificación de email no es un requisito obligatorio para la a
 
 Los tokens de verificación existen en el modelo de datos para mantener la flexibilidad futura, pero no se utilizan si no hay servicio de email configurado. En desarrollo, podemos auto-verificar usuarios para facilitar las pruebas sin necesidad de configurar infraestructura de correo electrónico.
 
-**Integraciones Externas Opcionales**
+**Integraciones Externas**
 
 Diseñamos el sistema para que las integraciones externas sean completamente opcionales, permitiendo que el núcleo funcional opere de manera independiente.
 
@@ -72,7 +116,7 @@ Configuramos el pool de conexiones con valores razonables para desarrollo: 5 con
 La función get_db usa el patrón de generador de Python para asegurar que la sesión siempre se cierre correctamente, incluso si hay errores durante el procesamiento de la request. Esta decisión previene fugas de conexiones que podrían agotar el pool y causar problemas de rendimiento o bloqueos en la aplicación.
 
 Validaciones realizadas:
-- Conexión exitosa a PostgreSQL
+- Conexión correcta a PostgreSQL
 - Pool de conexiones funcionando correctamente
 
 ---
@@ -124,7 +168,7 @@ Aplicamos la migración con alembic upgrade head y verificamos en pgAdmin que to
 
 Validaciones realizadas:
 - Migración generada detecta todas las tablas
-- Upgrade exitoso sin errores
+- Upgrade correcto sin errores
 - Todas las foreign keys y constraints creados correctamente
 - Tablas visibles en PostgreSQL
 
@@ -204,1321 +248,318 @@ Todos los repositorios manejan transacciones y hacen rollback automático si hay
 
 ---
 
----
+### DIA 5 DE DICIEMBRE - SESIÓN 1 - BLOQUES 6.1, 6.2, 6.3 Y 7.1, 7.2 COMPLETADOS
 
-## FASE 0: Configuración Base del Proyecto
+Bloques implementados:
+- Bloque 6.1: AuthService
+- Bloque 6.2: PortfolioService (ya existía, se verificó)
+- Bloque 6.3: OperationService
+- Bloque 7.1: Authentication Middleware (Dependencies)
+- Bloque 7.2: Error Handling Middleware
 
-### Bloque 0.1: Estructura de Directorios y Dependencias
+Comentarios:
+En esta sesión completamos la capa de servicios faltante y el middleware de autenticación. Decidimos dejar las integraciones externas (Alpha Vantage, OpenAI) para el final, enfocándonos primero en tener el backend completamente funcional.
 
-**Archivo:** `backend/requirements.txt`
+**AuthService (auth_service.py):**
+Implementamos el servicio de autenticación que coordina todo el flujo de auth. Los métodos principales son:
+- `register()`: crea usuario con perfil, validando email único y hasheando password
+- `authenticate()`: valida credenciales sin generar tokens
+- `login()`: autenticación completa con generación de tokens JWT y creación de sesión en BD
+- `refresh_tokens()`: renueva tokens validando la sesión en BD
+- `logout()` y `logout_all()`: invalidan sesiones
+- `get_user_from_token()`: extrae usuario de un access token (usado por middleware)
+- `change_password()`: cambia password invalidando todas las sesiones por seguridad
 
-**Objetivo:**
-Establecer la estructura base del proyecto y definir las dependencias necesarias para el desarrollo del backend.
+Decidimos que al cambiar password se invaliden todas las sesiones activas como medida de seguridad. Esto protege al usuario en caso de que su password haya sido comprometida.
 
-**Tareas de Implementación:**
-- Crear estructura completa de directorios según la arquitectura documentada
-- Definir dependencias en requirements.txt: FastAPI, SQLAlchemy, Alembic, Pydantic, Passlib, Pandas, OpenAI, Pytest
-- Crear archivos `__init__.py` en todos los paquetes Python
-- Configurar archivo `.gitignore` para Python
+**OperationService (operation_service.py):**
+Este servicio complementa a PortfolioService con funcionalidades de consulta y estadísticas. La creación de operaciones sigue en PortfolioService porque necesita actualizar posiciones en la misma transacción. OperationService provee:
+- Métodos de filtrado por asset, tipo, rango de fechas
+- `get_portfolio_statistics()`: estadísticas agregadas (total compras, ventas, fees, etc.)
+- `get_asset_statistics()`: estadísticas por activo individual
 
-**Validación:**
-- Instalar dependencias sin errores: `pip install -r requirements.txt`
-- Verificar importación básica: `python -c "import fastapi, sqlalchemy, pydantic"`
-- Comprobar que no hay conflictos de versiones con `pip check`
+**Middleware de Autenticación (dependencies.py):**
+Usamos el patrón de dependencias de FastAPI en lugar de middleware tradicional porque es más flexible y testeable. Implementamos:
+- `get_db()`: inyecta sesión de BD con cleanup automático
+- `get_current_user()`: extrae y valida usuario del JWT, lanza 401 si inválido
+- `get_current_active_user()`: extiende anterior verificando is_active, lanza 403 si desactivado
+- `get_optional_user()`: retorna usuario o None, útil para endpoints que funcionan con y sin auth
 
-**Resultado Esperado:**
-- Estructura de directorios completa y organizada
-- requirements.txt con todas las dependencias especificadas
-- Entorno virtual funcionando correctamente
+Usamos HTTPBearer de FastAPI que automáticamente muestra el botón de autorización en Swagger UI.
 
----
+**Error Handler (error_handler.py):**
+Definimos una jerarquía de excepciones de dominio para separar lógica de negocio de detalles HTTP:
+- `AppException`: base para todas las excepciones
+- `NotFoundError`, `AlreadyExistsError`, `ValidationError`: errores comunes
+- `AuthenticationError`, `AuthorizationError`: errores de auth
+- `BusinessRuleError`, `InsufficientFundsError`: errores de reglas de negocio
 
-### Bloque 0.2: Configuración Central con Variables de Entorno
+Cada excepción tiene su status code apropiado. Los handlers convierten estas excepciones en respuestas JSON estandarizadas.
 
-**Archivo:** `backend/app/core/config/settings.py`
-
-**Objetivo:**
-Implementar un sistema centralizado de configuración usando Pydantic Settings para gestionar variables de entorno de forma tipada y segura.
-
-**Tareas de Implementación:**
-- Crear clase `Settings` heredando de `BaseSettings`
-- Definir variables agrupadas por categoría:
-  - Database: DATABASE_URL, pool_size
-  - Security: SECRET_KEY, ACCESS_TOKEN_EXPIRE_MINUTES
-  - External APIs: ALPHA_VANTAGE_API_KEY, OPENAI_API_KEY
-  - CORS: lista de orígenes permitidos
-- Configurar lectura desde archivo `.env`
-- Exportar singleton `settings` para uso global
-
-**Validación:**
-- Cargar variables desde archivo .env de prueba
-- Verificar que lanza error si faltan variables críticas
-- Comprobar tipos de datos correctos
-
-**Resultado Esperado:**
-- Clase Settings funcionando con variables tipadas
-- Archivo `.env.example` documentado
-- Singleton accesible desde cualquier módulo
+Validaciones realizadas:
+- Estructura de servicios coherente con repositorios
+- Dependencies usan correctamente el patrón generator
+- Excepciones cubren casos de uso principales
 
 ---
 
-### Bloque 0.3: Configuración de Motor de Base de Datos
+### DIA 5 DE DICIEMBRE - SESIÓN 2 - BLOQUES 8.1 A 8.6 COMPLETADOS
 
-**Archivo:** `backend/app/core/database/session.py`
+Bloques implementados:
+- Bloque 8.1: Auth Endpoints
+- Bloque 8.2: Users Endpoints
+- Bloque 8.3: Portfolios Endpoints
+- Bloque 8.4: Operations Endpoints
+- Bloque 8.6: Main Application Setup
 
-**Objetivo:**
-Configurar el motor de SQLAlchemy para la conexión con PostgreSQL y definir la sesión de base de datos.
+Comentarios:
+Completamos toda la capa de API REST con endpoints funcionales para cada dominio.
 
-**Tareas de Implementación:**
-- Crear `engine` usando create_engine con DATABASE_URL
-- Configurar pool de conexiones básico
-- Crear `SessionLocal` con sessionmaker
-- Definir `Base` declarativa para los modelos
-- Implementar función `get_db()` para dependency injection
+**Auth Endpoints (/api/v1/auth/):**
+- `POST /register`: registra usuario, retorna datos sin password
+- `POST /login`: autentica y retorna tokens JWT
+- `POST /refresh`: renueva access token con refresh token
+- `POST /logout`: invalida sesión actual (requiere auth)
+- `POST /logout-all`: invalida todas las sesiones (requiere auth)
 
-**Validación:**
-- Establecer conexión a PostgreSQL
-- Ejecutar query simple: `SELECT 1`
-- Verificar que las sesiones se crean y destruyen correctamente
+Todos los endpoints usan los schemas de Pydantic para validación automática.
 
-**Resultado Esperado:**
-- Conexión estable a PostgreSQL
-- Base declarativa lista para usar en modelos
-- Función get_db() funcional para FastAPI
+**Users Endpoints (/api/v1/users/):**
+- `GET /me`: obtiene perfil del usuario autenticado
+- `PUT /me`: actualiza perfil (semántica PATCH)
+- `PUT /me/password`: cambia password verificando la actual
 
----
+Estos endpoints solo permiten operar sobre el propio usuario, nunca sobre otros.
 
-## FASE 1: Capa de Modelos (Domain Models)
+**Portfolios Endpoints (/api/v1/portfolios/):**
+- `GET /`: lista portfolios del usuario
+- `POST /`: crea portfolio nuevo
+- `GET /{id}`: obtiene portfolio con posiciones (valida ownership)
+- `PUT /{id}`: actualiza nombre/descripción
+- `DELETE /{id}`: elimina portfolio y posiciones
 
-### Bloque 1.1: Modelos de Usuario y Autenticación
+Implementamos validación de ownership en cada operación que accede a un portfolio específico.
 
-**Archivos:** `backend/app/models/user.py`
+**Operations Endpoints (/api/v1/operations/):**
+- `GET /`: lista operaciones con filtros (asset, tipo, fechas)
+- `POST /`: crea operación BUY o SELL
+- `GET /stats/{portfolio_id}`: estadísticas del portfolio
+- `GET /{id}`: detalle de operación
+- `PUT /{id}`: actualiza notas (valores financieros inmutables)
 
-**Objetivo:**
-Implementar los modelos ORM para gestión de usuarios, perfiles y sesiones.
+Para SELL validamos que haya cantidad suficiente. Los valores financieros no se pueden modificar después de crear la operación para mantener integridad del historial.
 
-**Tareas de Implementación:**
-- **Clase User**: campos básicos (id, email, password_hash, is_active, is_verified, timestamps)
-- Relaciones: profile (one-to-one), sessions (one-to-many), portfolios (one-to-many)
-- Métodos: verify_password(), hash_password()
-- **Clase UserProfile**: información adicional del usuario (currency, timezone, language, preferences)
-- **Clase UserSession**: gestión de refresh tokens
+**Main Application (main.py):**
+Configuramos la aplicación FastAPI completa con:
+- Metadatos para documentación OpenAPI
+- CORS configurado desde settings
+- Exception handlers registrados
+- Todos los routers incluidos bajo /api/v1
+- Endpoints de health check (/, /health, /health/db)
+- Eventos de startup/shutdown para logging
 
-**Validación:**
-- Crear usuario y verificar generación de UUID
-- Probar hashing y verificación de contraseñas
-- Validar constraint de email único
-- Verificar relaciones User-UserProfile
+El script anterior de pruebas se renombró a test_services.py para conservarlo.
 
-**Resultado Esperado:**
-- Tres clases ORM funcionales
-- Relaciones entre modelos configuradas
-- Métodos de negocio operativos
+**Estructura de routers:**
+Organizamos la API en un router principal (api_router) que agrupa todos los sub-routers:
+```
+/api/v1/
+  /auth/      (autenticación)
+  /users/     (gestión de usuario)
+  /portfolios/ (carteras)
+  /operations/ (operaciones)
+```
 
----
-
-### Bloque 1.2: Modelos de Portfolio y Posiciones
-
-**Archivos:** `backend/app/models/portfolio.py`
-
-**Objetivo:**
-Implementar modelos para la gestión de carteras y posiciones de activos.
-
-**Tareas de Implementación:**
-- **Clase Portfolio**: campos para métricas financieras (total_value, total_cost, gain_loss)
-- Constraint único en (user_id, name)
-- Relaciones: user, assets (one-to-many)
-- Métodos: calculate_metrics(), update_balance()
-- **Clase PortfolioAsset**: representación de posiciones (quantity, average_price, current_price)
-- Métodos: calculate_position_value()
-
-**Validación:**
-- Crear portfolio y verificar inicialización
-- Crear posiciones y calcular valores
-- Probar cálculo de métricas con múltiples posiciones
-- Verificar constraint de nombre único por usuario
-
-**Resultado Esperado:**
-- Modelos Portfolio y PortfolioAsset funcionales
-- Cálculos financieros precisos usando Decimal
-- Relaciones configuradas correctamente
+Validaciones realizadas:
+- Endpoints siguen convenciones REST
+- Validación de ownership en todas las operaciones
+- Schemas de response correctamente definidos
+- Documentación OpenAPI generada automáticamente
 
 ---
 
-### Bloque 1.3: Modelo de Operaciones Financieras
+### DIA 5 DE DICIEMBRE - SESIÓN 3 - BLOQUE 8.5 COMPLETADO (MARKET ENDPOINTS)
 
-**Archivos:** `backend/app/models/operation.py`
+Bloque implementado:
+- Bloque 8.5: Market Endpoints
 
-**Objetivo:**
-Implementar el modelo para registro de operaciones de compra y venta.
+Comentarios:
+Completamos la última pieza faltante de la capa de API: los endpoints de datos de mercado. Estos endpoints proporcionan acceso al catálogo de activos financieros y sus precios, sentando las bases para la futura integración con Alpha Vantage.
 
-**Tareas de Implementación:**
-- Definir Enum **OperationType** (BUY, SELL)
-- **Clase Operation**: campos transaccionales (quantity, price, fees, total_amount)
-- CheckConstraints: quantity > 0, price > 0, fees >= 0
-- Relación con Portfolio
-- Métodos: calculate_total() diferenciado por tipo
+**Market Endpoints (/api/v1/market/):**
 
-**Validación:**
-- Crear operación BUY y verificar cálculo total
-- Crear operación SELL y verificar cálculo
-- Probar constraints de valores positivos
-- Verificar relación con Portfolio
+Implementamos cuatro endpoints principales para gestión de activos y precios:
 
-**Resultado Esperado:**
-- Modelo Operation funcional
-- Enum OperationType configurado
-- Cálculos correctos según tipo de operación
+- `GET /assets/search?q=<query>`: Búsqueda fuzzy de activos por símbolo o nombre. Este endpoint es fundamental para la experiencia de usuario ya que permite encontrar activos incluso cuando no se conoce el símbolo exacto. La búsqueda es case-insensitive y soporta coincidencias parciales tanto en símbolo como en nombre.
 
----
+- `GET /assets/{symbol}`: Obtiene información detallada de un activo específico incluyendo tipo (STOCK, ETF, CRYPTO), moneda, exchange y descripción. Este endpoint es útil para mostrar detalles del activo antes de realizar operaciones.
 
-### Bloque 1.4: Modelos de Activos y Precios
+- `GET /prices/{symbol}/current`: Retorna el precio actual de un activo. Actualmente obtiene el último precio almacenado en la base de datos; cuando se integre Alpha Vantage en la Fase 5, este endpoint consultará precios en tiempo real.
 
-**Archivos:** `backend/app/models/asset.py`
+- `GET /prices/{symbol}/historical?days=30`: Obtiene precios históricos en formato OHLCV (Open, High, Low, Close, Volume). Estos datos son esenciales para el módulo de IA que calculará indicadores técnicos como RSI, SMA y volatilidad.
 
-**Objetivo:**
-Implementar modelos para el catálogo de activos financieros y sus precios históricos.
+- `POST /assets`: Endpoint para crear activos en el catálogo. Aunque los activos normalmente se crean automáticamente cuando un usuario registra una operación con un símbolo nuevo, este endpoint permite poblar el catálogo inicial o agregar activos manualmente.
 
-**Tareas de Implementación:**
-- Definir Enum **AssetType** (STOCK, ETF, CRYPTO)
-- **Clase Asset**: información del activo (symbol, name, type, currency)
-- **Clase AssetPrice**: precios históricos con timestamp
-- Constraint único en (asset_symbol, timestamp)
+**Decisiones de diseño:**
 
-**Validación:**
-- Crear activo y verificar constraint de symbol único
-- Agregar precios históricos
-- Probar constraint de timestamp único por activo
+1. **Endpoints públicos**: A diferencia de otros endpoints, los de mercado no requieren autenticación porque la información de precios y activos es pública. Decidimos incluir `get_optional_user` para poder personalizar respuestas en el futuro si el usuario está autenticado.
 
-**Resultado Esperado:**
-- Modelos Asset y AssetPrice funcionales
-- Constraints de unicidad aplicados
-- Relaciones configuradas
+2. **Preparación para Alpha Vantage**: Los endpoints están diseñados para ser compatibles con la estructura de datos que retornará Alpha Vantage. Cuando implementemos la integración, solo necesitaremos agregar la lógica de consulta externa sin cambiar la interfaz de la API.
+
+3. **Manejo de datos faltantes**: Los endpoints de precios manejan graciosamente el caso donde no hay datos disponibles, retornando mensajes claros que indican que los precios se actualizarán cuando se configure Alpha Vantage.
+
+**Estructura de routers actualizada:**
+```
+/api/v1/
+  /auth/       (autenticación)
+  /users/      (gestión de usuario)
+  /portfolios/ (carteras)
+  /operations/ (operaciones)
+  /market/     (datos de mercado) ← NUEVO
+```
+
+Validaciones realizadas:
+- Todos los routers se cargan correctamente
+- Endpoints de búsqueda funcionan con queries case-insensitive
+- Schemas de respuesta siguen estructura OHLCV estándar
+- Documentación OpenAPI actualizada automáticamente
+
+Con esta sesión completamos al 100% las Fases 6 (Servicios), 7 (Middleware) y 8 (API Endpoints). El backend está completamente funcional y listo para las integraciones externas de la Fase 5 (Alpha Vantage, OpenAI).
 
 ---
 
-### Bloque 1.5: Modelos de Análisis con IA
+### DIA 5 DE DICIEMBRE - SESIÓN 2 - INTEGRACIONES EXTERNAS COMPLETADAS
 
-**Archivos:** `backend/app/models/analysis.py`
+**Bloques implementados:**
+- Fase 5: Integraciones Externas (Alpha Vantage)
+- Fase 9: Módulo de IA (OpenAI)
 
-**Objetivo:**
-Implementar modelos para almacenar análisis generados por IA.
+**Comentarios:**
 
-**Tareas de Implementación:**
-- Definir Enums: **AnalysisType** (PORTFOLIO, ASSET), **AnalysisStatus** (PENDING, COMPLETED, FAILED)
-- **Clase Analysis**: almacena el análisis generado (text, technical_indicators, expires_at)
-- **Clase AnalysisRequest**: tracking de solicitudes de análisis
-- Métodos: is_expired(), get_disclaimer()
+En esta sesión implementamos las integraciones externas con Alpha Vantage y OpenAI, completando las funcionalidades de datos de mercado en tiempo real y análisis con inteligencia artificial.
 
-**Validación:**
-- Crear análisis y verificar campos
-- Probar método is_expired()
-- Crear request de análisis
-- Verificar disclaimer automático
+**Cliente Alpha Vantage (alpha_vantage_client.py):**
+Implementamos un cliente robusto para interactuar con la API de Alpha Vantage que proporciona:
+- `get_quote()`: obtiene cotización actual con precio, volumen, cambio porcentual
+- `get_daily_prices()`: descarga datos históricos OHLCV (open, high, low, close, volume)
+- `search_symbol()`: busca activos por keywords
 
-**Resultado Esperado:**
-- Modelos de análisis funcionales
-- Sistema de caché temporal implementado
-- Tracking de requests operativo
+El cliente maneja automáticamente los errores de API, rate limiting y formatea las respuestas al formato esperado. Usa httpx para requests con timeout configurado (10 segundos). Implementamos context manager support para manejo limpio de conexiones, lo que garantiza que los recursos se liberen adecuadamente después de cada uso.
 
----
+**Servicio de Datos de Mercado (market_service.py):**
+Este servicio coordina la obtención y cache de datos financieros:
+- `get_current_price()`: cachea precios por 5 minutos para optimizar requests a Alpha Vantage
+- `get_historical_prices()`: consulta y almacena datos históricos en BD para análisis posterior
+- `search_assets()`: busca primero en catálogo local, luego en Alpha Vantage
+- `update_portfolio_prices()`: actualiza todos los precios de un portfolio automáticamente
 
-### Bloque 1.6: Configuración de Migraciones con Alembic
+El servicio implementa una estrategia de cache inteligente: primero verifica datos locales recientes, solo consulta API externa si es necesario. Esto respeta los límites del free tier de Alpha Vantage (25 requests por día con máximo de 5 requests por minuto), evitando exceder cuotas y garantizando disponibilidad continua del servicio.
 
-**Archivos:** `backend/alembic/`, `backend/alembic.ini`
+**Procesador de Indicadores Técnicos (technical_indicators.py):**
+Implementamos cálculo de indicadores estándar usando pandas-ta (biblioteca especializada en análisis técnico financiero):
+- RSI (Relative Strength Index): detecta condiciones de sobrecompra/sobreventa con período de 14 días
+- MACD (Moving Average Convergence Divergence): identifica momentum y señales de trading
+- Medias Móviles (SMA): períodos estándar de 20, 50 y 200 días para análisis de tendencias
+- Volatilidad: desviación estándar anualizada de retornos logarítmicos
+- Bandas de Bollinger: banda superior, media e inferior con 2 desviaciones estándar
+- Análisis de tendencia: clasifica como alcista, bajista o lateral basándose en las medias móviles
 
-**Objetivo:**
-Inicializar Alembic para gestión de migraciones y crear la migración inicial.
+Cada indicador incluye documentación completa explicando su interpretación y uso en análisis técnico. El procesador maneja automáticamente casos donde no hay suficientes datos históricos para calcular ciertos indicadores.
 
-**Tareas de Implementación:**
-- Ejecutar `alembic init alembic`
-- Configurar alembic.ini y env.py
-- Importar todos los modelos en env.py
-- Generar migración inicial: `alembic revision --autogenerate -m "Initial migration"`
-- Revisar archivo de migración generado
-- Aplicar migración: `alembic upgrade head`
+**Cliente OpenAI (openai_client.py):**
+Implementamos cliente para generar análisis descriptivos usando gpt-5-mini:
+- `generate_analysis()`: método genérico para generación usando OpenAI Responses API
+- Sistema de extracción robusto que maneja diferentes tipos de respuesta (reasoning, message)
+- Validación de disponibilidad del cliente antes de cada operación
 
-**Validación:**
-- Ejecutar upgrade en base de datos limpia
-- Verificar creación de todas las tablas
-- Comprobar foreign keys y constraints
-- Ejecutar downgrade y verificar limpieza
+El cliente usa exclusivamente gpt-5-mini con máximo de 5000 tokens de salida. Todos los análisis incluyen system prompt que instruye al modelo a ser descriptivo (no prescriptivo) y siempre incluir disclaimers. La extracción de texto de las respuestas maneja múltiples formatos de contenido para garantizar robustez.
 
-**Resultado Esperado:**
-- Alembic configurado y funcional
-- Migración inicial genera esquema completo
-- Upgrade/downgrade funciona correctamente
+**Servicio de Análisis con IA (analysis_service.py):**
+Coordina el flujo completo de generación de análisis:
+- `generate_asset_analysis()`: obtiene datos históricos, calcula indicadores, genera análisis con IA
+- `generate_portfolio_analysis()`: actualiza precios, prepara datos, genera análisis de portfolio
+- `get_analysis_history()`: recupera análisis previos del usuario
+- Validación de ownership antes de generar análisis de portfolios
 
----
+Los análisis se almacenan en base de datos con timestamps para mantener historial completo. Cada solicitud se trackea en la tabla analysis_requests con estados (processing, completed, failed), lo que permite monitorear el proceso y diagnosticar fallos. El sistema verifica disponibilidad de datos históricos suficientes antes de generar análisis técnicos.
 
-## FASE 2: Capa de Schemas (Pydantic DTOs)
+**Nuevos Endpoints de Análisis (analysis/router.py):**
+- `POST /analysis/asset/{symbol}`: genera análisis técnico de activo
+- `POST /analysis/portfolio/{portfolio_id}`: genera análisis de portfolio
+- `GET /analysis/history`: obtiene historial de análisis
+- `DELETE /analysis/cache/*`: invalida cache para regenerar
 
-### Bloque 2.1: Schemas de Autenticación
+**Actualización de Endpoints de Mercado:**
+Integramos MarketDataService en los endpoints existentes:
+- `/market/assets/search`: ahora busca en Alpha Vantage si no hay resultados locales
+- `/market/prices/{symbol}/current`: consulta precio actual en tiempo real
+- `/market/prices/{symbol}/historical`: descarga y cachea datos históricos
 
-**Archivos:** `backend/app/schemas/auth.py`
+**Decisiones de diseño importantes:**
 
-**Objetivo:**
-Implementar esquemas Pydantic para validación de requests y responses de autenticación.
+1. **Cache en base de datos**: Implementamos almacenamiento de datos históricos en PostgreSQL para minimizar llamadas a APIs externas y respetar rate limits. Los precios y datos históricos se consultan primero localmente antes de hacer requests a Alpha Vantage, optimizando el uso de la cuota gratuita.
 
-**Tareas de Implementación:**
-- **UserRegister**: email, password, full_name con validators
-- **UserLogin**: email, password
-- **TokenResponse**: access_token, refresh_token, token_type, expires_in
-- **PasswordReset**: token, new_password
-- Validators personalizados para email y password strength
+2. **Manejo de errores robusto**: Los clientes manejan graciosamente errores de API (rate limit, autenticación, timeout). El sistema incluye logging detallado de todos los errores para facilitar diagnóstico y monitoreo.
 
-**Validación:**
-- Probar validator de email con formato inválido
-- Probar validator de password con password débil
-- Serializar/deserializar schemas
+3. **Indicadores técnicos estándar**: Usamos fórmulas y períodos estándar de la industria (RSI 14, SMA 20/50/200) para compatibilidad con análisis técnico tradicional. La biblioteca pandas-ta garantiza cálculos precisos y consistentes.
 
-**Resultado Esperado:**
-- Schemas de autenticación funcionales
-- Validadores custom operativos
-- Mensajes de error descriptivos
+4. **Prompts estructurados**: El servicio de análisis construye prompts con contexto completo (indicadores, precios, métricas) de forma organizada. Los datos se formatean claramente para que el modelo GPT pueda interpretarlos correctamente.
 
----
+5. **Disclaimers automáticos**: El system prompt instruye al modelo a ser objetivo y descriptivo, nunca prescriptivo. Los análisis generados incluyen disclaimers indicando que no constituyen consejo financiero.
 
-### Bloque 2.2: Schemas de Usuario
+6. **Arquitectura modular**: Las integraciones son completamente opcionales. Sin API keys, esas funcionalidades no están disponibles pero el resto del sistema funciona normalmente.
 
-**Archivos:** `backend/app/schemas/user.py`
-
-**Objetivo:**
-Implementar schemas para gestión de perfiles de usuario.
-
-**Tareas de Implementación:**
-- **UserResponse**: información pública del usuario (excluye password_hash)
-- **UserProfileResponse**: incluye datos del perfil
-- **UserUpdate**: campos actualizables
-- **PasswordChange**: current_password, new_password
-
-**Validación:**
-- Verificar exclusión de campos sensibles
-- Probar validators de currency y timezone
-- Serializar desde modelo ORM
-
-**Resultado Esperado:**
-- Schemas de usuario funcionales
-- Campos sensibles excluidos
-- Compatibilidad ORM configurada
+Validaciones realizadas:
+- Cliente Alpha Vantage obtiene correctamente cotizaciones, datos históricos y búsqueda de símbolos
+- Procesador de indicadores técnicos calcula RSI, MACD, medias móviles con valores correctos
+- Cliente OpenAI genera análisis usando Responses API con extracción robusta de texto
+- Endpoints de análisis retornan respuestas en formato JSON correcto con estados apropiados
+- Sistema funciona correctamente sin API keys (funcionalidades limitadas) y con API keys configuradas
+- Manejo de errores funciona adecuadamente ante fallos de APIs externas
 
 ---
 
-### Bloque 2.3: Schemas de Portfolio
+## Conclusiones
 
-**Archivos:** `backend/app/schemas/portfolio.py`
+A lo largo del desarrollo de esta plataforma de gestión de carteras y análisis de mercado, hemos construido un sistema completo que integra múltiples componentes y servicios externos. El proceso de implementación incremental nos permitió validar cada pieza antes de continuar, lo cual fue fundamental para mantener la calidad y coherencia del código mientras aprendíamos los patrones arquitectónicos que estábamos aplicando.
 
-**Objetivo:**
-Implementar schemas para gestión de carteras.
+### Logros Principales
 
-**Tareas de Implementación:**
-- **PortfolioCreate**: name, base_currency, description
-- **PortfolioUpdate**: campos modificables
-- **PortfolioResponse**: incluye métricas calculadas
-- **PortfolioAssetResponse**: información de posiciones
-- **PortfolioDetailResponse**: response completo con posiciones
+Hemos logrado implementar exitosamente todas las fases planificadas del backend. El sistema cuenta con una arquitectura robusta que separa claramente las responsabilidades entre capas: modelos de datos, repositorios para acceso a datos, servicios para lógica de negocio, y endpoints para la interfaz REST. Esta separación nos ha permitido mantener un código organizado y testeable, facilitando el mantenimiento y la evolución futura del sistema.
 
-**Validación:**
-- Probar validators de name y currency
-- Verificar serialización de Decimals
-- Probar schemas anidados
+La implementación de autenticación mediante JWT nos proporcionó una solución segura y escalable para gestionar sesiones de usuario. El uso de refresh tokens y la invalidación de sesiones al cambiar contraseñas nos permitió implementar prácticas de seguridad adecuadas para un sistema que maneja información financiera sensible.
 
-**Resultado Esperado:**
-- Schemas de portfolio funcionales
-- Serialización de tipos complejos configurada
-- Responses anidados operativos
+Las integraciones externas con Alpha Vantage y OpenAI se diseñaron como módulos completamente opcionales, lo que nos permitió desarrollar y probar el núcleo del sistema sin depender de servicios externos. Esta decisión arquitectónica resultó ser fundamental porque nos permitió avanzar en el desarrollo mientras gestionábamos el acceso a las API keys, y además hace que el sistema sea más resiliente ante fallos de servicios externos.
 
----
+### Aprendizajes Arquitectónicos
 
-### Bloque 2.4: Schemas de Operaciones
+El patrón Repository que implementamos nos demostró la importancia de abstraer el acceso a datos. Esta abstracción no solo hizo el código más testeable, sino que también nos permitió cambiar detalles de implementación sin afectar la lógica de negocio. El BaseRepository genérico que creamos evitó repetición de código y garantizó consistencia en las operaciones CRUD básicas.
 
-**Archivos:** `backend/app/schemas/operation.py`
+La separación entre schemas Pydantic para validación y modelos SQLAlchemy para persistencia nos enseñó la importancia de mantener capas de abstracción claras. Los schemas nos permiten validar datos de entrada y formatear respuestas sin exponer detalles internos de la base de datos, mejorando tanto la seguridad como la flexibilidad de la API.
 
-**Objetivo:**
-Implementar schemas para operaciones financieras.
+El uso de dependency injection en FastAPI mediante las funciones `get_db()` y `get_current_user()` nos mostró cómo los frameworks modernos facilitan la gestión de dependencias y el ciclo de vida de objetos. Esta aproximación hizo el código más limpio y testeable que si hubiéramos usado variables globales o singletons.
 
-**Tareas de Implementación:**
-- **OperationCreate**: datos de la operación con validators
-- **OperationUpdate**: campos modificables
-- **OperationResponse**: incluye total_amount calculado
-- **OperationFilter**: parámetros de filtrado
+### Decisiones de Diseño Destacadas
 
-**Validación:**
-- Probar validators de valores positivos
-- Verificar validación de rangos de fechas
-- Probar cálculo de total_amount
+La decisión de usar Decimal en lugar de float para valores monetarios fue crítica para mantener precisión en los cálculos financieros. Este aprendizaje nos recordó la importancia de entender las limitaciones de los tipos de datos cuando trabajamos con información que requiere precisión exacta.
 
-**Resultado Esperado:**
-- Schemas de operaciones funcionales
-- Validators impiden valores inválidos
-- Filtros configurados
+El sistema de almacenamiento de datos históricos en base de datos que implementamos nos demostró cómo optimizar el uso de servicios externos respetando rate limits. Este patrón de consultar primero localmente antes de hacer requests externos es aplicable a muchos otros escenarios donde necesitamos balancear frescura de datos con eficiencia y costos.
 
----
+La arquitectura modular que diseñamos, donde las integraciones externas son opcionales, nos permitió construir un sistema que funciona completamente sin ellas. Esta flexibilidad es valiosa tanto para desarrollo como para despliegues en entornos donde ciertos servicios no están disponibles.
 
-### Bloque 2.5: Schemas de Mercado
+### Consideraciones para el Futuro
 
-**Archivos:** `backend/app/schemas/market.py`
+El sistema está preparado para evolucionar en varias direcciones. La estructura de análisis con IA puede extenderse para incluir más tipos de análisis o diferentes modelos de lenguaje. El módulo de indicadores técnicos puede expandirse con nuevos indicadores o estrategias de trading más complejas.
 
-**Objetivo:**
-Implementar schemas para datos de mercado.
+La integración con Alpha Vantage puede complementarse con otros proveedores de datos financieros para aumentar la cobertura de mercados o mejorar la disponibilidad. La arquitectura actual facilita esta extensión mediante la abstracción del servicio de datos de mercado.
 
-**Tareas de Implementación:**
-- **AssetInfo**: información del activo
-- **PricePoint**: punto de precio OHLCV
-- **CurrentPriceResponse**: precio actual
-- **HistoricalPriceResponse**: histórico de precios
+Para un entorno de producción, consideraríamos implementar más funcionalidades de seguridad como rate limiting por usuario, auditoría completa de operaciones, y backups automáticos de la base de datos. También podríamos agregar funcionalidades de colaboración como compartir portfolios entre usuarios o crear análisis comparativos entre diferentes carteras.
 
-**Validación:**
-- Probar validators de datos OHLCV
-- Verificar serialización de datetime
-- Probar listas de PricePoint
+El sistema de notificaciones podría extenderse para alertar a usuarios sobre cambios significativos en sus posiciones o cuando se generen nuevos análisis. La infraestructura actual ya soporta estas extensiones gracias a la separación de responsabilidades que implementamos.
 
-**Resultado Esperado:**
-- Schemas de mercado funcionales
-- Validación de consistencia OHLCV
-- Timezone handling configurado
+### Reflexión Final
 
----
+Este proyecto nos ha permitido aplicar los conceptos teóricos de arquitectura de software en un contexto práctico y real. La metodología incremental que seguimos nos demostró la importancia de validar decisiones arquitectónicas temprano y ajustar el diseño cuando era necesario. La documentación detallada que mantuvimos durante el desarrollo nos ayudó a recordar las razones detrás de cada decisión y facilita el mantenimiento futuro.
 
-### Bloque 2.6: Schemas de Análisis
+La plataforma resultante demuestra cómo los patrones arquitectónicos bien aplicados pueden resultar en un sistema mantenible, extensible y robusto. Cada componente fue diseñado pensando no solo en su funcionalidad inmediata, sino también en cómo interactúa con el resto del sistema y cómo puede evolucionar en el futuro. Esta perspectiva holística es esencial para construir software que perdure y siga siendo útil a medida que los requisitos cambian.
 
-**Archivos:** `backend/app/schemas/analysis.py`
-
-**Objetivo:**
-Implementar schemas para análisis con IA.
-
-**Tareas de Implementación:**
-- **TechnicalIndicators**: estructura de indicadores técnicos
-- **AnalysisRequest**: solicitud de análisis
-- **AnalysisResponse**: resultado del análisis con disclaimer
-- Validator: portfolio_id o asset_symbol debe estar presente
-
-**Validación:**
-- Probar validator de campos mutuamente exclusivos
-- Verificar inclusión automática de disclaimer
-- Probar schemas anidados
-
-**Resultado Esperado:**
-- Schemas de análisis funcionales
-- Validators custom operativos
-- Disclaimer automático incluido
-
----
-
-## FASE 3: Componentes de Seguridad
-
-### Bloque 3.1: Password Hasher con Bcrypt
-
-**Archivos:** `backend/app/core/security/password.py`
-
-**Objetivo:**
-Implementar componente para hashing y verificación de contraseñas.
-
-**Tareas de Implementación:**
-- Clase **PasswordHasher**:
-  - Método `hash_password(password: str) -> str`
-  - Método `verify_password(password: str, hash: str) -> bool`
-- Usar bcrypt con cost factor 12
-
-**Validación:**
-- Verificar que hash genera salt diferente cada vez
-- Probar verify_password con password correcta e incorrecta
-- Validar formato bcrypt del hash generado
-
-**Resultado Esperado:**
-- Hashing seguro con bcrypt
-- Verificación funcional
-- Salts aleatorios
-
----
-
-### Bloque 3.2: JWT Handler para Tokens
-
-**Archivos:** `backend/app/core/security/jwt.py`
-
-**Objetivo:**
-Implementar handler para creación y validación de tokens JWT. Este componente es fundamental para la autenticación stateless que permite escalar la aplicación sin necesidad de sesiones en servidor.
-
-**Tareas de Implementación:**
-- Clase **JWTHandler**:
-  - Método `create_access_token(data: dict) -> str`
-  - Método `create_refresh_token(data: dict) -> str`
-  - Método `decode_token(token: str) -> dict`
-  - Método `verify_token(token: str) -> bool`
-
-**Validación:**
-- Crear y decodificar token correctamente
-- Verificar expiración de tokens
-- Probar con token inválido
-
-**Resultado Esperado:**
-- Generación de tokens JWT funcional
-- Validación de firma y expiración
-- Access tokens (30 minutos) y refresh tokens (7 días)
-
----
-
-### Bloque 3.3: Generador de Tokens de Verificación
-
-**Archivos:** `backend/app/core/security/tokens.py`
-
-**Objetivo:**
-Implementar generadores de tokens seguros para verificación de email y reset de password.
-
-**Tareas de Implementación:**
-- Función `generate_verification_token() -> str`
-- Función `generate_reset_token() -> str`
-- Función `verify_token_expiration(created_at, ttl_hours) -> bool`
-
-**Validación:**
-- Verificar que tokens son únicos
-- Probar validación de expiración
-- Comprobar que tokens son URL-safe
-
-**Resultado Esperado:**
-- Tokens criptográficamente seguros
-- Validación de expiración funcional
-- Tokens URL-safe
-
----
-
-## FASE 4: Capa de Repositorios (Repository Pattern)
-
-### Bloque 4.1: Base Repository Genérico
-
-**Archivos:** `backend/app/repositories/base.py`
-
-**Objetivo:**
-Implementar repositorio base genérico con operaciones CRUD comunes.
-
-**Tareas de Implementación:**
-- Clase genérica **BaseRepository[T]**:
-  - Métodos: create(), get_by_id(), update(), delete()
-  - Métodos: list(), count()
-  - Manejo de transacciones
-
-**Validación:**
-- Probar operaciones CRUD básicas
-- Verificar paginación en list()
-- Probar manejo de errores con rollback
-
-**Resultado Esperado:**
-- Repositorio base genérico funcional
-- Métodos CRUD reutilizables
-- Type hints correctos
-
----
-
-### Bloque 4.2: UserRepository
-
-**Archivos:** `backend/app/repositories/user.py`
-
-**Objetivo:**
-Implementar repositorio especializado para usuarios.
-
-**Tareas de Implementación:**
-- Clase **UserRepository** hereda BaseRepository[User]:
-  - `get_by_email(email: str)`
-  - `update_profile(user_id, profile_data)`
-  - `create_session(user_id, refresh_token)`
-  - `get_active_sessions(user_id)`
-
-**Validación:**
-- Probar búsqueda por email (case-insensitive)
-- Crear y actualizar perfil
-- Gestionar sesiones
-
-**Resultado Esperado:**
-- Repositorio de usuarios funcional
-- Métodos específicos del dominio
-- Eager loading optimizado
-
----
-
-### Bloque 4.3: PortfolioRepository
-
-**Archivos:** `backend/app/repositories/portfolio.py`
-
-**Objetivo:**
-Implementar repositorio para carteras y posiciones.
-
-**Tareas de Implementación:**
-- Clase **PortfolioRepository**:
-  - `get_by_user_id(user_id)`
-  - `get_with_positions(portfolio_id)`
-  - `create_or_update_position(portfolio_id, asset_data)`
-  - `calculate_portfolio_metrics(portfolio_id)`
-
-**Validación:**
-- Listar carteras de un usuario
-- Crear y actualizar posiciones
-- Calcular métricas financieras
-
-**Resultado Esperado:**
-- Repositorio de portfolios funcional
-- Cálculo de métricas implementado
-- Upsert de posiciones operativo
-
----
-
-### Bloque 4.4: OperationRepository
-
-**Archivos:** `backend/app/repositories/operation.py`
-
-**Objetivo:**
-Implementar repositorio para operaciones financieras.
-
-**Tareas de Implementación:**
-- Clase **OperationRepository**:
-  - `get_by_portfolio(portfolio_id, filters)`
-  - `filter_by_date_range(date_from, date_to)`
-  - `get_portfolio_statistics(portfolio_id)`
-
-**Validación:**
-- Filtrar operaciones por criterios
-- Calcular estadísticas básicas
-- Aplicar rangos de fechas
-
-**Resultado Esperado:**
-- Repositorio de operaciones funcional
-- Filtrado multi-criterio
-- Estadísticas básicas
-
----
-
-### Bloque 4.5: AssetRepository
-
-**Archivos:** `backend/app/repositories/asset.py`
-
-**Objetivo:**
-Implementar repositorio para activos y precios.
-
-**Tareas de Implementación:**
-- Clase **AssetRepository**:
-  - `get_by_symbol(symbol)`
-  - `search_assets(query)`
-  - `get_or_create(asset_data)`
-  - `get_historical_prices(symbol, days)`
-
-**Validación:**
-- Buscar por símbolo
-- Búsqueda fuzzy de activos
-- Get-or-create pattern
-- Consultar históricos
-
-**Resultado Esperado:**
-- Repositorio de activos funcional
-- Búsqueda flexible
-- Gestión de precios históricos
-
----
-
-### Bloque 4.6: AnalysisRepository
-
-**Archivos:** `backend/app/repositories/analysis.py`
-
-**Objetivo:**
-Implementar repositorio para análisis con IA.
-
-**Tareas de Implementación:**
-- Clase **AnalysisRepository**:
-  - `get_cached_analysis(portfolio_id, asset_symbol)`
-  - `invalidate_cache(portfolio_id)`
-  - `create_request(request_data)`
-  - `update_request_status(request_id, status)`
-
-**Validación:**
-- Obtener análisis cacheado
-- Invalidar caché
-- Gestionar requests de análisis
-
-**Resultado Esperado:**
-- Repositorio de análisis funcional
-- Sistema de caché implementado
-- Tracking de requests
-
----
-
-## FASE 5: Integraciones Externas
-
-### Bloque 5.1: Cliente Alpha Vantage API
-
-**Archivos:** `backend/app/clients/alpha_vantage.py`
-
-**Objetivo:**
-Implementar cliente HTTP para Alpha Vantage API.
-
-**Tareas de Implementación:**
-- Clase **AlphaVantageClient**:
-  - `get_quote(symbol) -> dict`
-  - `get_daily_prices(symbol, days) -> list`
-  - `search_symbol(query) -> list`
-- Manejo de errores HTTP
-- Retry simple en errores temporales
-
-**Validación:**
-- Obtener cotización de símbolo válido
-- Consultar precios históricos
-- Buscar símbolos
-- Manejar símbolo inválido
-
-**Resultado Esperado:**
-- Cliente funcional con 3 métodos principales
-- Manejo básico de errores
-- Parsing de respuestas
-
----
-
-### Bloque 5.2: Cliente OpenAI API
-
-**Archivos:** `backend/app/clients/openai_client.py`
-
-**Objetivo:**
-Implementar wrapper para OpenAI API.
-
-**Tareas de Implementación:**
-- Clase **OpenAIClient**:
-  - `generate_analysis(prompt, model) -> str`
-  - `validate_response(response) -> bool`
-- Timeout configurado
-- Logging básico
-
-**Validación:**
-- Generar análisis con prompt válido
-- Validar respuesta generada
-- Manejar errores de API
-
-**Resultado Esperado:**
-- Cliente funcional con SDK oficial
-- Validación de respuestas
-- Timeout configurado
-
----
-
-### Bloque 5.3: Cliente Redis Cache (Opcional)
-
-**Archivos:** `backend/app/clients/redis_client.py`
-
-**Objetivo:**
-Implementar wrapper básico para Redis como caché.
-
-**Tareas de Implementación:**
-- Clase **RedisClient**:
-  - `get(key)`
-  - `set(key, value, ttl)`
-  - `delete(key)`
-- Manejo graceful si Redis no disponible
-
-**Validación:**
-- Operaciones básicas get/set
-- Expiración por TTL
-- Fallback si Redis no disponible
-
-**Resultado Esperado:**
-- Cliente básico funcional
-- TTL configurable
-- Fallback graceful
-
----
-
-## FASE 6: Capa de Servicios (Business Logic)
-
-### Bloque 6.1: AuthService
-
-**Archivos:** `backend/app/services/auth_service.py`
-
-**Objetivo:**
-Implementar lógica de negocio para autenticación.
-
-**Tareas de Implementación:**
-- Clase **AuthService**:
-  - `register_user(user_data)`
-  - `authenticate_user(email, password)`
-  - `verify_email(token)`
-  - `refresh_access_token(refresh_token)`
-  - `logout(user_id, session_id)`
-
-**Validación:**
-- Registrar usuario completo (User + UserProfile)
-- Autenticar con credenciales válidas
-- Verificar email
-- Refrescar token
-- Cerrar sesión
-
-**Resultado Esperado:**
-- Servicio de autenticación funcional
-- Validaciones de seguridad implementadas
-- Transacciones atómicas
-
----
-
-### Bloque 6.2: PortfolioService
-
-**Archivos:** `backend/app/services/portfolio_service.py`
-
-**Objetivo:**
-Implementar lógica de negocio para carteras.
-
-**Tareas de Implementación:**
-- Clase **PortfolioService**:
-  - `create_portfolio(user_id, portfolio_data)`
-  - `get_portfolio(portfolio_id, user_id)`
-  - `get_portfolio_details(portfolio_id, user_id)`
-  - `update_portfolio(portfolio_id, user_id, data)`
-  - `delete_portfolio(portfolio_id, user_id)`
-
-**Validación:**
-- Crear portfolio
-- Validar ownership
-- Obtener detalles con posiciones
-- Actualizar y eliminar
-
-**Resultado Esperado:**
-- Servicio de portfolios funcional
-- Validación de ownership en todos los métodos
-- Cálculo de métricas integrado
-
----
-
-### Bloque 6.3: OperationService
-
-**Archivos:** `backend/app/services/operation_service.py`
-
-**Objetivo:**
-Implementar lógica para operaciones de compra/venta.
-
-**Tareas de Implementación:**
-- Clase **OperationService**:
-  - `create_buy_operation(operation_data)`
-  - `create_sell_operation(operation_data)`
-  - `update_operation(operation_id, data)`
-  - `delete_operation(operation_id)`
-
-**Validación:**
-- Crear operación BUY y actualizar posición
-- Crear operación SELL validando cantidad disponible
-- Actualizar operación
-- Eliminar operación
-
-**Resultado Esperado:**
-- Servicio de operaciones funcional
-- Lógica diferenciada BUY vs SELL
-- Actualización automática de posiciones
-
----
-
-### Bloque 6.4: MarketDataService
-
-**Archivos:** `backend/app/services/market_data_service.py`
-
-**Objetivo:**
-Implementar lógica para obtención de datos de mercado.
-
-**Tareas de Implementación:**
-- Clase **MarketDataService**:
-  - `get_current_price(symbol)`
-  - `get_historical_prices(symbol, days)`
-  - `search_assets(query)`
-- Caché simple en Redis (si disponible)
-
-**Validación:**
-- Obtener precio actual
-- Consultar históricos
-- Buscar activos
-- Verificar caché básico
-
-**Resultado Esperado:**
-- Servicio de mercado funcional
-- Caché básico implementado
-- Integración con Alpha Vantage
-
----
-
-### Bloque 6.5: AIService
-
-**Archivos:** `backend/app/services/ai_service.py`
-
-**Objetivo:**
-Implementar lógica para generación de análisis con IA.
-
-**Tareas de Implementación:**
-- Clase **AIService**:
-  - `generate_portfolio_analysis(portfolio_id)`
-  - `generate_asset_analysis(symbol)`
-  - `get_cached_analysis(portfolio_id, symbol)`
-- Integración con módulo IA
-
-**Validación:**
-- Generar análisis de portfolio
-- Generar análisis de activo
-- Usar caché si disponible
-
-**Resultado Esperado:**
-- Servicio de IA funcional
-- Integración con OpenAI
-- Caché de análisis
-
----
-
-### Bloque 6.6: UserService
-
-**Archivos:** `backend/app/services/user_service.py`
-
-**Objetivo:**
-Implementar lógica para gestión de usuarios.
-
-**Tareas de Implementación:**
-- Clase **UserService**:
-  - `get_user_profile(user_id)`
-  - `update_user_profile(user_id, profile_data)`
-  - `change_password(user_id, current_password, new_password)`
-
-**Validación:**
-- Obtener perfil
-- Actualizar perfil
-- Cambiar password
-
-**Resultado Esperado:**
-- Servicio de usuarios funcional
-- Validaciones implementadas
-- Actualización segura de password
-
----
-
-## FASE 7: Middleware y Dependencias
-
-### Bloque 7.1: Authentication Middleware
-
-**Archivos:** `backend/app/middleware/auth_middleware.py`
-
-**Objetivo:**
-Implementar dependency para validación de JWT.
-
-**Tareas de Implementación:**
-- Función **get_current_user(token, db)**:
-  - Extraer token del header
-  - Decodificar y validar JWT
-  - Obtener usuario de base de datos
-  - Verificar usuario activo
-
-**Validación:**
-- Probar con token válido
-- Probar con token expirado
-- Probar con token inválido
-- Probar con usuario inactivo
-
-**Resultado Esperado:**
-- Dependency funcional para proteger endpoints
-- Validación automática de JWT
-- Errores HTTP apropiados
-
----
-
-### Bloque 7.2: Error Handling Middleware
-
-**Archivos:** `backend/app/middleware/error_handler.py`
-
-**Objetivo:**
-Implementar middleware para manejo de errores.
-
-**Tareas de Implementación:**
-- Clase **ErrorHandlerMiddleware**:
-  - Capturar excepciones
-  - Convertir a respuestas HTTP estandarizadas
-  - Logging de errores
-
-**Validación:**
-- Probar manejo de diferentes tipos de excepciones
-- Verificar respuestas estandarizadas
-- Comprobar logging
-
-**Resultado Esperado:**
-- Middleware de errores funcional
-- Respuestas estandarizadas
-- Logging apropiado
-
----
-
-### Bloque 7.3: CORS Middleware
-
-**Archivos:** `backend/app/middleware/cors.py`
-
-**Objetivo:**
-Configurar CORS para permitir requests desde frontend.
-
-**Tareas de Implementación:**
-- Configurar CORSMiddleware:
-  - Orígenes permitidos desde settings
-  - Métodos y headers permitidos
-  - Credentials habilitadas
-
-**Validación:**
-- Probar request desde origen permitido
-- Verificar preflight OPTIONS
-
-**Resultado Esperado:**
-- CORS configurado correctamente
-- Preflight requests manejados
-- Configuración desde settings
-
----
-
-## FASE 8: Capa de API (Endpoints REST)
-
-### Bloque 8.1: Auth Endpoints
-
-**Archivos:** `backend/app/api/v1/auth/router.py`
-
-**Objetivo:**
-Implementar endpoints de autenticación.
-
-**Tareas de Implementación:**
-- Router `/api/v1/auth`:
-  - POST `/register`
-  - POST `/login`
-  - POST `/refresh`
-  - POST `/logout`
-  - POST `/verify-email`
-
-**Validación:**
-- Registrar usuario nuevo
-- Login con credenciales válidas
-- Refrescar token
-- Logout
-- Verificar email
-
-**Resultado Esperado:**
-- Endpoints de autenticación funcionales
-- Documentación OpenAPI generada
-- Status codes apropiados
-
----
-
-### Bloque 8.2: Users Endpoints
-
-**Archivos:** `backend/app/api/v1/users/router.py`
-
-**Objetivo:**
-Implementar endpoints de gestión de usuario.
-
-**Tareas de Implementación:**
-- Router `/api/v1/users`:
-  - GET `/me`
-  - PUT `/me`
-  - PUT `/me/password`
-
-**Validación:**
-- Obtener perfil propio
-- Actualizar perfil
-- Cambiar password
-
-**Resultado Esperado:**
-- Endpoints de usuario funcionales
-- Protección con autenticación
-- Validación de ownership
-
----
-
-### Bloque 8.3: Portfolios Endpoints
-
-**Archivos:** `backend/app/api/v1/portfolios/router.py`
-
-**Objetivo:**
-Implementar endpoints CRUD de carteras.
-
-**Tareas de Implementación:**
-- Router `/api/v1/portfolios`:
-  - GET `/`
-  - POST `/`
-  - GET `/{portfolio_id}`
-  - PUT `/{portfolio_id}`
-  - DELETE `/{portfolio_id}`
-  - GET `/{portfolio_id}/positions`
-
-**Validación:**
-- Listar portfolios propios
-- Crear portfolio
-- Obtener detalle
-- Actualizar y eliminar
-- Ver posiciones
-
-**Resultado Esperado:**
-- Endpoints CRUD completos
-- Validación de ownership
-- Paginación básica
-
----
-
-### Bloque 8.4: Operations Endpoints
-
-**Archivos:** `backend/app/api/v1/operations/router.py`
-
-**Objetivo:**
-Implementar endpoints de operaciones.
-
-**Tareas de Implementación:**
-- Router `/api/v1/operations`:
-  - GET `/`
-  - POST `/`
-  - PUT `/{operation_id}`
-  - DELETE `/{operation_id}`
-
-**Validación:**
-- Listar operaciones con filtros
-- Crear operación BUY
-- Crear operación SELL
-- Actualizar y eliminar
-
-**Resultado Esperado:**
-- Endpoints de operaciones funcionales
-- Filtrado básico
-- Validación de cantidad en SELL
-
----
-
-### Bloque 8.5: Market Endpoints
-
-**Archivos:** `backend/app/api/v1/market/router.py`
-
-**Objetivo:**
-Implementar endpoints de datos de mercado.
-
-**Tareas de Implementación:**
-- Router `/api/v1/market`:
-  - GET `/quote/{symbol}`
-  - GET `/historical/{symbol}`
-  - GET `/assets/search`
-
-**Validación:**
-- Obtener cotización actual
-- Consultar históricos
-- Buscar activos
-
-**Resultado Esperado:**
-- Endpoints de mercado funcionales
-- Sin autenticación requerida (públicos)
-- Caché integrado
-
----
-
-### Bloque 8.6: Main Application Setup
-
-**Archivos:** `backend/main.py`
-
-**Objetivo:**
-Configurar aplicación FastAPI principal.
-
-**Tareas de Implementación:**
-- Crear instancia FastAPI
-- Registrar todos los routers
-- Registrar middleware
-- Health check endpoint
-
-**Validación:**
-- GET /health funciona
-- GET /docs muestra Swagger UI
-- CORS funciona
-- Error handling funciona
-
-**Resultado Esperado:**
-- Aplicación FastAPI completa
-- Routers registrados
-- Swagger UI funcional
-- Middleware configurado
-
----
-
-## FASE 9: Módulo de Análisis con IA
-
-### Bloque 9.1: Data Processor - Indicadores Técnicos
-
-**Archivos:** `ai_module/src/processors/technical_indicators.py`
-
-**Objetivo:**
-Implementar cálculo de indicadores técnicos básicos.
-
-**Tareas de Implementación:**
-- Clase **TechnicalIndicatorProcessor**:
-  - `calculate_rsi(prices, period=14)`
-  - `calculate_sma(prices, period=20)`
-  - `calculate_volatility(prices)`
-  - `identify_trend(prices)`
-
-**Validación:**
-- Calcular RSI con datos reales
-- Calcular SMA
-- Calcular volatilidad
-- Identificar tendencia
-
-**Resultado Esperado:**
-- Cálculo de 4 indicadores básicos
-- Uso de Pandas para eficiencia
-- Validación de datos de entrada
-
----
-
-### Bloque 9.2: Prompt Builder
-
-**Archivos:** `ai_module/src/templates/prompt_builder.py`
-
-**Objetivo:**
-Construir prompts estructurados para OpenAI.
-
-**Tareas de Implementación:**
-- Clase **PromptBuilder**:
-  - `build_portfolio_prompt(portfolio_data, technical_data)`
-  - `build_asset_prompt(asset_data, technical_data)`
-  - `include_disclaimer()`
-
-**Validación:**
-- Construir prompt de portfolio
-- Construir prompt de activo
-- Verificar inclusión de disclaimer
-
-**Resultado Esperado:**
-- Templates de prompts estructurados
-- Disclaimer automático
-- Formato optimizado para GPT-4
-
----
-
-### Bloque 9.3: Analysis Generator
-
-**Archivos:** `ai_module/src/analyzers/market_analyzer.py`
-
-**Objetivo:**
-Orquestar proceso completo de análisis.
-
-**Tareas de Implementación:**
-- Clase **MarketAnalyzer**:
-  - `analyze_portfolio(portfolio_data)`
-  - `analyze_asset(symbol)`
-- Integración: datos → indicadores → prompt → OpenAI
-
-**Validación:**
-- Generar análisis completo de portfolio
-- Generar análisis de activo
-- Verificar flujo completo
-
-**Resultado Esperado:**
-- Orquestación del análisis funcional
-- Integración con OpenAI
-- Validación de outputs
-
----
-
-### Bloque 9.4: Configuration del Módulo IA
-
-**Archivos:** `ai_module/src/config.py`
-
-**Objetivo:**
-Configurar módulo IA.
-
-**Tareas de Implementación:**
-- Clase **AIModuleConfig**:
-  - API keys
-  - Parámetros de indicadores técnicos
-  - Configuración de prompts
-
-**Validación:**
-- Cargar configuración
-- Validar parámetros
-
-**Resultado Esperado:**
-- Configuración centralizada
-- Parámetros ajustables
-- Validación de API keys
-
----
-
-## FASE 10: Testing Básico y Documentación
-
-### Bloque 10.1: Tests Esenciales
-
-**Archivos:** `backend/tests/`
-
-**Objetivo:**
-Implementar tests básicos para validar funcionalidad core.
-
-**Tareas de Implementación:**
-- Tests unitarios de modelos (crear, relaciones básicas)
-- Tests unitarios de schemas (validación)
-- Tests de servicios principales (AuthService, PortfolioService)
-- Tests de endpoints principales (register, login, create portfolio)
-
-**Validación:**
-- Ejecutar suite de tests
-- Verificar cobertura básica
-
-**Resultado Esperado:**
-- Suite de tests básica funcional
-- Cobertura de funcionalidad core
-- CI/CD preparado (opcional)
-
----
-
-### Bloque 10.2: Documentación API
-
-**Archivos:** `docs/API.md`
-
-**Objetivo:**
-Documentar API para uso y evaluación.
-
-**Tareas de Implementación:**
-- Documentar endpoints principales
-- Incluir ejemplos de requests/responses
-- Describir autenticación
-- Casos de uso comunes
-
-**Resultado Esperado:**
-- Documentación clara y completa
-- Ejemplos funcionales
-- Swagger UI complementado
-
----
-
-### Bloque 10.3: README del Backend
-
-**Archivos:** `backend/README.md`
-
-**Objetivo:**
-Documentar setup y uso del backend.
-
-**Tareas de Implementación:**
-- Instrucciones de instalación
-- Configuración de variables de entorno
-- Cómo ejecutar migraciones
-- Cómo correr el servidor
-- Cómo ejecutar tests
-
-**Resultado Esperado:**
-- README completo y claro
-- Instrucciones paso a paso
-- Troubleshooting básico
-
----
-
-## Notas Finales
-
-Este plan de implementación está diseñado específicamente para un proyecto académico, donde priorizamos el aprendizaje de patrones de arquitectura y buenas prácticas sobre optimizaciones de producción. Esta decisión nos permite enfocarnos en entender los principios fundamentales sin la complejidad adicional que requeriría un sistema en producción real.
-
-**Lo que incluimos:**
-
-Decidimos incluir estos elementos porque son esenciales para demostrar comprensión de arquitectura de software:
-- Arquitectura en capas bien definida: Esta separación nos ayuda a entender cómo organizar código de manera mantenible y escalable.
-- Patrones de diseño (Repository, Service): Estos patrones son fundamentales en el desarrollo de software y queremos demostrar que entendemos cuándo y cómo aplicarlos.
-- Validaciones y seguridad básica: Aunque no implementamos seguridad de nivel enterprise, incluimos las prácticas esenciales como hashing de passwords y autenticación JWT.
-- Integración con APIs externas: Esto nos permite demostrar cómo diseñar sistemas que interactúan con servicios externos de manera resiliente.
-- Tests esenciales para validar funcionalidad: Los tests nos ayudan a validar que nuestro código funciona correctamente y demuestran que entendemos la importancia de la calidad del software.
-
-**Lo que NO incluimos (por ser proyecto académico):**
-
-Decidimos conscientemente excluir estos elementos porque agregarían complejidad sin contribuir significativamente a nuestros objetivos de aprendizaje:
-- Rate limiting avanzado: Aunque es importante en producción, no es esencial para demostrar comprensión de arquitectura.
-- Tests de carga y concurrencia: Estos requieren infraestructura adicional y tiempo que preferimos invertir en entender los patrones fundamentales.
-- Optimizaciones de producción: Las optimizaciones prematuras pueden complicar el código sin beneficio educativo claro.
-- Monitoreo y observabilidad: Aunque importante, no es crítico para un proyecto académico que se ejecuta localmente.
-- Deployment en la nube: Esto agregaría complejidad de infraestructura que está fuera del alcance de nuestro objetivo principal.
-- Caching complejo multicapa: El caching básico que implementamos es suficiente para demostrar el concepto sin la complejidad adicional.
-
-El objetivo final es tener una aplicación funcional que demuestre comprensión de los conceptos de arquitectura de software, no una solución enterprise-ready. Esta claridad de objetivos nos permite mantener el foco en el aprendizaje sin distraernos con optimizaciones que, aunque valiosas, no son esenciales para nuestro propósito educativo.

@@ -130,7 +130,7 @@ class AnalysisRequestStatus(BaseModel):
     requested_at: datetime
     completed_at: Optional[datetime]
     error_message: Optional[str]
-    analysis_id: Optional[UUID] = None  # id del analisis generado (si completo exitosamente)
+    analysis_id: Optional[UUID] = None  # id del analisis generado (si completo correctamente)
     
     model_config = {
         "from_attributes": True,

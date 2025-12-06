@@ -27,9 +27,7 @@ El cliente proporciona:
 El cliente requiere configuración:
 
 - `OPENAI_API_KEY`: Clave API de OpenAI
-- `OPENAI_MODEL`: Modelo a utilizar (por defecto gpt-4 o gpt-3.5-turbo)
-- `MAX_TOKENS`: Límite máximo de tokens en respuesta
-- `TEMPERATURE`: Temperatura para generación (creatividad)
+- `OPENAI_MODEL`: Modelo a utilizar (por defecto gpt-5-mini o gpt-5)
 - `TIMEOUT`: Timeout para peticiones a la API
 
 ## Manejo de Errores
@@ -51,4 +49,3 @@ El cliente incluye optimizaciones:
 - Compresión de prompts para reducir tokens
 - Reintentos exponenciales para errores temporales
 - Logging detallado para debugging
-

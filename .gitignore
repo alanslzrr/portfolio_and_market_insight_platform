@@ -54,3 +54,6 @@ htmlcov/
 alembic/versions/*.pyc
 pytest.ini
 
+.venv/
+.env.local
+.python-version

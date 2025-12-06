@@ -25,9 +25,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # duracion de tokens de acceso
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # duracion de tokens de refresco
     
-    # apis externas (opcional - se usaran en fase 5 y fase 9)
+    # apis externas
     ALPHA_VANTAGE_API_KEY: str = ""  # api key para datos de mercado (alpha vantage)
     OPENAI_API_KEY: str = ""  # api key para analisis con ia (openai)
+    
+    @property
+    def alpha_vantage_api_key(self) -> str:
+        """retorna api key de alpha vantage (puede estar vacia)."""
+        return self.ALPHA_VANTAGE_API_KEY
+    
+    @property
+    def openai_api_key(self) -> str:
+        """retorna api key de openai (puede estar vacia)."""
+        return self.OPENAI_API_KEY
     
     # configuracion cors (para comunicacion con frontend)
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"  # origenes permitidos separados por comas

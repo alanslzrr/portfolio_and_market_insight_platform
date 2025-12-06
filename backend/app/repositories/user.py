@@ -198,3 +198,54 @@ class UserRepository(BaseRepository[User]):
         ).delete()
         self.db.commit()
         return count
+    
+    def update_session_token(self, session_id: UUID, new_refresh_token: str) -> Optional[UserSession]:
+        """
+        actualiza el refresh token de una sesion.
+        
+        usado cuando se renueva el token.
+        
+        args:
+            session_id: id de la sesion
+            new_refresh_token: nuevo token
+            
+        returns:
+            sesion actualizada o none
+        """
+        session = self.db.query(UserSession).filter(
+            UserSession.id == session_id
+        ).first()
+        
+        if session:
+            session.refresh_token = new_refresh_token
+            session.last_used_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(session)
+            return session
+        return None
+    
+    def invalidate_session(self, session_id: UUID) -> bool:
+        """
+        invalida una sesion eliminandola de la bd.
+        
+        args:
+            session_id: id de la sesion
+            
+        returns:
+            true si se invalido, false si no existia
+        """
+        return self.delete_session(session_id)
+    
+    def invalidate_all_sessions(self, user_id: UUID) -> int:
+        """
+        invalida todas las sesiones de un usuario.
+        
+        alias de delete_all_sessions para consistencia semantica.
+        
+        args:
+            user_id: id del usuario
+            
+        returns:
+            numero de sesiones invalidadas
+        """
+        return self.delete_all_sessions(user_id)

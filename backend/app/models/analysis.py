@@ -40,7 +40,7 @@ class AnalysisStatus(str, enum.Enum):
     estado del proceso de analisis.
     
     PENDING: solicitado pero aun no procesado
-    COMPLETED: analisis completado exitosamente
+    COMPLETED: analisis completado correctamente
     FAILED: error al generar el analisis
     """
     PENDING = "PENDING"

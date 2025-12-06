@@ -47,7 +47,7 @@ partition "Operaciones Principales del Usuario" {
                 :Validar nombre único por usuario;
                 :Crear cartera en base de datos;
                 :Inicializar métricas (valor_total = 0);
-                :Cartera creada exitosamente;
+                :Cartera creada correctamente;
             endif
             
             if (Consultar cartera?) then (Sí)
@@ -115,7 +115,7 @@ partition "Operaciones Principales del Usuario" {
                 :Actualizar posición en cartera\n(crear o actualizar PortfolioAsset);
                 :Recalcular precio promedio de compra;
                 :Actualizar balance de la cartera;
-                :Operación registrada exitosamente;
+                :Operación registrada correctamente;
             endif
             
             if (Registrar operación de venta?) then (Sí)
@@ -130,7 +130,7 @@ partition "Operaciones Principales del Usuario" {
                     :Actualizar posición en cartera\n(reducir cantidad disponible);
                     :Recalcular precio promedio (FIFO o promedio ponderado);
                     :Actualizar balance de la cartera;
-                    :Operación de venta registrada exitosamente;
+                    :Operación de venta registrada correctamente;
                 else (No)
                     :Error: Cantidad insuficiente;
                     :Informar error al usuario;

@@ -52,7 +52,7 @@ class UserLogin(BaseModel):
 
 class TokenResponse(BaseModel):
     """
-    response con tokens jwt despues de login exitoso.
+    response con tokens jwt despues de login correcto.
     access token dura poco (30min), refresh token dura mas (7 dias).
     """
     access_token: str
