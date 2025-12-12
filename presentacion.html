@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio & Market Insight Platform - API REST</title>
+    <style>
+        /* ================= ESTILOS BASE ================= */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: white;
+            overflow: hidden;
+            color: #333;
+        }
+
+        .presentation-container { width: 100vw; height: 100vh; position: relative; }
+
+        /* ================= DIAPOSITIVAS ================= */
+        .slide {
+            display: none;
+            width: 100%;
+            height: 100%;
+            padding: 35px 60px 90px 60px;
+            background: white;
+            position: absolute;
+            top: 0; left: 0;
+            animation: slideIn 0.6s ease-in-out;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+        .slide.active { 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; /* Centrado vertical por defecto */
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(50px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        /* ================= TIPOGRAFÍA Y FORMATO ================= */
+        .slide h1 { font-size: 2.6em; font-weight: 700; margin-bottom: 0.4em; color: #2d3748; line-height: 1.1; }
+        .slide h2 { font-size: 1.9em; font-weight: 600; margin-bottom: 0.6em; color: #4a5568; border-bottom: 2px solid #6e90c8; padding-bottom: 0.2em; }
+        .slide h3 { font-size: 1.3em; font-weight: 600; margin: 0.6em 0 0.5em; color: #3f66a6; border-bottom: 1px solid #6e90c8; padding-bottom: 0.15em; }
+        .slide p  { font-size: 1em; line-height: 1.5; margin-bottom: 0.6em; color: #4a5568; }
+        .slide ul, .slide ol { font-size: 1em; line-height: 1.6; color: #4a5568; margin-left: 1.6em; margin-bottom: 0.5em; }
+        .slide li { margin-bottom: 0.35em; }
+        .slide li::marker { color: #6e90c8; font-weight: bold; }
+
+        /* Textos destacados (Highlight) */
+        .highlight {
+            background: linear-gradient(120deg, rgba(110,144,200,0.15) 0%, rgba(110,144,200,0.35) 100%);
+            padding: 0.2em 0.4em; border-radius: 4px; font-weight: 600;
+        }
+
+        /* ================= CAJAS Y CONTENEDORES ================= */
+        
+        /* Caja con barra lateral azul (Stat Box) */
+        .stat-box {
+            background: #f7fafc; border-left: 6px solid #6e90c8;
+            padding: 0.9em 1em; margin: 0.7em 0; border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .stat-box h4 { color: #3f66a6; font-size: 1em; margin-bottom: 0.4em; }
+
+        /* Caja de Insights (Borde completo azul suave) */
+        .insight-box {
+            background: linear-gradient(135deg, #eaf2fe 0%, #e6f0ff 100%);
+            padding: 1em 1.1em; border-radius: 12px; margin: 0.8em 0;
+            border: 2px solid #6e90c8;
+        }
+        .insight-box h4 { color: #3f66a6; font-size: 1.05em; margin-bottom: 0.6em; }
+
+        /* Caja Key Insight */
+        .key-insight {
+            background: #f7fafc;
+            border-left: 6px solid #6e90c8;
+            padding: 1.1em;
+            border-radius: 8px;
+            margin: 0.9em 0;
+        }
+        .key-insight h4 { color: #3f66a6; margin-bottom: 0.6em; font-size: 1.05em; }
+
+        /* Layout de dos columnas */
+        .two-column {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; align-items: start;
+        }
+
+        /* ================= TABLAS ================= */
+        .comparison-table {
+            width: 100%; border-collapse: collapse; margin: 1.1em 0; font-size: 0.85em;
+        }
+        .comparison-table th {
+            background: #6e90c8; color: white; padding: 10px; text-align: left; font-weight: 600;
+        }
+        .comparison-table td {
+            padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 0.9em;
+        }
+        .comparison-table tr:nth-child(even) { background: #f7fafc; }
+        
+        /* ================= BADGES (ETIQUETAS) ================= */
+        .badge { display: inline-block; padding: 0.25em 0.6em; border-radius: 20px; font-size: 0.8em; font-weight: 600; margin: 0.2em; }
+        .badge-success { background: #c6f6d5; color: #22543d; }
+        .badge-info { background: #c8dcff; color: #1f3f7a; }
+        .badge-warning { background: #feebc8; color: #7c2d12; }
+
+        /* ================= UI DE NAVEGACIÓN ================= */
+        .navigation {
+            position: fixed; bottom: 30px; right: 30px; display: flex; gap: 15px; z-index: 100;
+        }
+        .nav-btn {
+            background: #365ea8; color: white; border: none; padding: 12px 20px;
+            border-radius: 50px; cursor: pointer; font-size: 1em; font-weight: 500;
+            transition: all 0.25s ease; box-shadow: 0 4px 15px rgba(110,144,200,0.3);
+        }
+        .nav-btn:hover { background: #2f5190; transform: translateY(-2px); }
+        .nav-btn:disabled { background: #cbd5e0; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        .slide-counter {
+            position: fixed; bottom: 30px; left: 30px; background: rgba(255,255,255,0.92);
+            padding: 10px 20px; border-radius: 25px; font-weight: 500; color: #4a5568;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        /* Diapositiva de Título (Portada) */
+        .title-slide {
+            background: linear-gradient(135deg, #6e90c8 0%, #3f66a6 100%);
+            color: white; text-align: center; align-items: center;
+        }
+        .title-slide h1 { color: white; font-size: 3em; margin-bottom: 0.3em; text-shadow: 0 2px 4px rgba(0,0,0,0.25); }
+        .title-slide p { color: rgba(255,255,255,0.9); font-size: 1.1em; margin-bottom: 0.3em; }
+        .title-slide h2 { border-bottom: none; color: white; font-size: 1.5em; opacity: 0.9; }
+
+        .brand-logo {
+            position: fixed; top: 20px; right: 30px; width: 180px; height: auto; z-index: 120;
+            opacity: 0.95;
+        }
+        
+        /* Imágenes dentro de slides */
+        .slide-image-container {
+            text-align: center; margin: 0.5em 0;
+        }
+        .slide-image {
+            max-width: 100%; max-height: 280px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        /* Bloque de código */
+        .code {
+            font-family: ui-monospace, monospace; background: #f6f8fa; border: 1px solid #e2e8f0;
+            border-radius: 8px; padding: 10px 12px; color: #2d3748; overflow-x: auto; margin: 10px 0;
+        }
+
+        /* Print styles */
+        @media print {
+            body { background: white !important; overflow: visible; }
+            .presentation-container, .slide { position: static; height: auto; display: block; page-break-after: always; }
+            .navigation, .brand-logo, .slide-counter { display: none !important; }
+        }
+    </style>
+    
+    <script>
+        window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] } };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+
+    <img src="postman/images/logo.png" alt="Logo" class="brand-logo">
+
+    <div class="presentation-container">
+        <!-- DIAPOSITIVA 1: PORTADA -->
+        <div class="slide title-slide active">
+            <h1>Portfolio & Market Insight Platform</h1>
+            <h2>API REST para Gestión de Carteras de Inversión</h2>
+            <br>
+            <p>Alan Ariel Salazar | Yago Ramos Sánchez</p>
+            <p>Arquitectura de Software</p>
+            <p>12 de Diciembre de 2025</p>
+            <br>
+            <p style="font-size: 0.85em;">https://github.com/alanslzrr/portfolio_and_market_insight_platform</p>
+        </div>
+
+        <!-- DIAPOSITIVA 2: VALOR DE NEGOCIO -->
+        <div class="slide">
+            <h2>Descripción del Sistema</h2>
+            
+            <div class="insight-box">
+                <h4>Contexto del Problema</h4>
+                <p>Se requiere una plataforma centralizada para <span class="highlight">gestión de carteras de inversión</span>, 
+                registro de operaciones, monitoreo de rendimiento y análisis de mercado en tiempo real.</p>
+            </div>
+
+            <h3>Funcionalidades Implementadas</h3>
+            <div class="two-column">
+                <div class="stat-box">
+                    <h4>Gestión de Portfolios</h4>
+                    <ul>
+                        <li>Creación y administración de múltiples carteras</li>
+                        <li>Registro de operaciones de compra y venta</li>
+                        <li>Cálculo de métricas financieras</li>
+                        <li>Persistencia de historial de transacciones</li>
+                    </ul>
+                </div>
+
+                <div class="stat-box">
+                    <h4>Integración de Servicios</h4>
+                    <ul>
+                        <li>Consulta de precios de mercado (Alpha Vantage API)</li>
+                        <li>Análisis mediante modelos de lenguaje (OpenAI API)</li>
+                        <li>Generación de reportes de rendimiento</li>
+                        <li>Autenticación basada en tokens JWT</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="key-insight">
+                <h4>Características Arquitectónicas</h4>
+                <p>Diseño modular con bajo acoplamiento. Las integraciones externas son opcionales. 
+                El núcleo del sistema opera de forma independiente, permitiendo despliegue sin dependencias de APIs de terceros.</p>
+            </div>
+        </div>
+
+        <!-- DIAPOSITIVA 3: API REST - ENDPOINTS -->
+        <div class="slide">
+            <h2>API REST - Endpoints Principales</h2>
+            
+            <h3>Autenticación y Usuarios</h3>
+            <div class="stat-box">
+                <ul>
+                    <li><span class="highlight">POST /api/v1/auth/register</span> - Registro de nuevos usuarios</li>
+                    <li><span class="highlight">POST /api/v1/auth/login</span> - Autenticación JWT (access + refresh tokens)</li>
+                    <li><span class="highlight">POST /api/v1/auth/refresh</span> - Renovación de tokens</li>
+                    <li><span class="highlight">POST /api/v1/auth/logout</span> - Cierre de sesión individual</li>
+                    <li><span class="highlight">POST /api/v1/auth/logout-all</span> - Cerrar todas las sesiones</li>
+                    <li><span class="highlight">GET /api/v1/users/me</span> - Perfil del usuario autenticado</li>
+                </ul>
+            </div>
+
+            <h3>Portfolios y Operaciones</h3>
+            <div class="two-column">
+                <div class="stat-box">
+                    <h4>Gestión de Carteras</h4>
+                    <ul>
+                        <li>GET /api/v1/portfolios</li>
+                        <li>POST /api/v1/portfolios</li>
+                        <li>GET /api/v1/portfolios/{id}</li>
+                        <li>PUT /api/v1/portfolios/{id}</li>
+                    </ul>
+                </div>
+
+                <div class="stat-box">
+                    <h4>Operaciones & Análisis</h4>
+                    <ul>
+                        <li>POST /api/v1/operations</li>
+                        <li>GET /api/v1/operations</li>
+                        <li>GET /api/v1/market/price/{symbol}</li>
+                        <li>POST /api/v1/analysis/generate</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- DIAPOSITIVA 4: PRUEBAS EN POSTMAN -->
+        <div class="slide">
+            <h2>Pruebas de API - Postman</h2>
+            
+            <div class="two-column">
+                <div>
+                    <h3>Registro de Usuario</h3>
+                    <div class="slide-image-container">
+                        <img src="postman/images/api:v1:register.png" class="slide-image" alt="Registro de usuario">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>Login JWT</h3>
+                    <div class="slide-image-container">
+                        <img src="postman/images/api:v1:auth:login.png" class="slide-image" alt="Login con JWT">
+                    </div>
+                </div>
+            </div>
+
+            <div class="two-column" style="margin-top: 1em;">
+                <div>
+                    <h3>Refresh Token</h3>
+                    <div class="slide-image-container">
+                        <img src="postman/images/api:v1:auth:refresh.png" class="slide-image" alt="Refresh token">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>Logout</h3>
+                    <div class="slide-image-container">
+                        <img src="postman/images/api:v1:auth:logout.png" class="slide-image" alt="Logout">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DIAPOSITIVA 5: ARQUITECTURA -->
+        <div class="slide">
+            <h2>Arquitectura del Sistema</h2>
+            
+            <div class="insight-box">
+                <h4>Arquitectura en Capas</h4>
+                <p>Implementación modular aplicando principios de separación de responsabilidades (SOLID) y bajo acoplamiento.</p>
+            </div>
+
+            <h3>Estructura de Capas</h3>
+            <div class="stat-box">
+                <h4>1. Capa de Presentación (FastAPI)</h4>
+                <p>Endpoints REST versionados (/api/v1/). Procesamiento de peticiones HTTP, validación de datos de entrada mediante esquemas Pydantic, serialización de respuestas.</p>
+            </div>
+
+            <div class="stat-box">
+                <h4>2. Capa de Lógica de Negocio</h4>
+                <p>Servicios desacoplados de la infraestructura. Orquestación de operaciones, implementación de reglas de negocio, cálculos de métricas financieras, coordinación con servicios externos.</p>
+            </div>
+
+            <div class="stat-box">
+                <h4>3. Capa de Acceso a Datos</h4>
+                <p>Implementación del patrón Repository. Abstracción de operaciones de persistencia, consultas mediante SQLAlchemy ORM, aislamiento de la lógica de base de datos.</p>
+            </div>
+
+            <div class="two-column">
+                <div class="stat-box">
+                    <h4>4. Modelos y Esquemas</h4>
+                    <ul>
+                        <li>Modelos SQLAlchemy (entidades de base de datos)</li>
+                        <li>Esquemas Pydantic (validación y serialización)</li>
+                        <li>Sistema de migraciones con Alembic</li>
+                    </ul>
+                </div>
+
+                <div class="stat-box">
+                    <h4>5. Servicios Integrados</h4>
+                    <ul>
+                        <li>Alpha Vantage API (datos de mercado)</li>
+                        <li>OpenAI API (procesamiento de lenguaje natural)</li>
+                        <li>PostgreSQL (sistema de persistencia)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="key-insight">
+                <h4>Patrones y Técnicas Implementadas</h4>
+                <p>Inyección de dependencias, patrón Repository, autenticación mediante JWT, 
+                diseño RESTful, arquitectura en capas con separación de responsabilidades.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="slide-counter">
+        <span id="current-slide">1</span> / <span id="total-slides">5</span> <span id="section-indicator"></span>
+    </div>
+
+    <div class="navigation">
+        <button class="nav-btn" id="prev-btn" onclick="previousSlide()">← Anterior</button>
+        <button class="nav-btn" id="next-btn" onclick="nextSlide()">Siguiente →</button>
+    </div>
+
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+
+        document.getElementById('total-slides').textContent = totalSlides;
+
+        // Mapa de nombres de secciones para la barra inferior
+        const sectionMap = {
+            0: '',
+            1: '· Valor de Negocio',
+            2: '· API REST',
+            3: '· Pruebas Postman',
+            4: '· Arquitectura'
+        };
+
+        function updateUI() {
+            document.getElementById('current-slide').textContent = currentSlide + 1;
+            document.getElementById('section-indicator').textContent = sectionMap[currentSlide] || '';
+            document.getElementById('prev-btn').disabled = currentSlide === 0;
+            document.getElementById('next-btn').disabled = currentSlide === totalSlides - 1;
+        }
+
+        function showSlide(n) {
+            slides[currentSlide].classList.remove('active');
+            currentSlide = n;
+            if (currentSlide >= totalSlides) currentSlide = 0;
+            if (currentSlide < 0) currentSlide = totalSlides - 1;
+            slides[currentSlide].classList.add('active');
+            
+            // Reiniciar scroll al cambiar
+            slides[currentSlide].scrollTop = 0;
+            
+            updateUI();
+        }
+
+        function nextSlide() { if (currentSlide < totalSlides - 1) showSlide(currentSlide + 1); }
+        function previousSlide() { if (currentSlide > 0) showSlide(currentSlide - 1); }
+
+        // Navegación con teclado
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); previousSlide(); }
+        });
+
+        // Inicializar
+        updateUI();
+    </script>
+</body>
+</html>
