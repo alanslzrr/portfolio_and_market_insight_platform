@@ -1,132 +1,169 @@
-"""
-servicio de datos de mercado.
-
-coordina la obtencion de datos financieros desde alpha vantage
-y los almacena/actualiza en la base de datos local.
-"""
-import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
 from sqlalchemy.orm import Session
+import logging
 
 from app.clients.alpha_vantage_client import AlphaVantageClient
 from app.models.asset import Asset, AssetPrice
 from app.repositories.asset import AssetRepository
 
-
 logger = logging.getLogger(__name__)
+
+# Movimos ALPHA_VANTAGE_TYPE_MAPPING y DEFAULT_ASSET_TYPE a nivel de módulo para centralizar
+# la lógica de tipado. Sino cambiábamos esto así, íbamos a tener duplicación de mapeos por toda
+# la aplicación y era un dolor mantenerlos sincronizados.
+ALPHA_VANTAGE_TYPE_MAPPING = {
+    "Equity": "STOCK",
+    "Common Stock": "STOCK",
+    "Stock": "STOCK",
+    "ETF": "ETF",
+    "Exchange Traded Fund": "ETF",
+    "Cryptocurrency": "CRYPTO",
+    "Digital Currency": "CRYPTO",
+    "Mutual Fund": "STOCK",
+    "Index": "STOCK",
+    "Fund": "STOCK",
+}
+
+DEFAULT_ASSET_TYPE = "STOCK"
 
 
 class MarketDataService:
-    """
-    servicio para gestion de datos de mercado.
-    
-    responsabilidades:
-    - obtener precios actuales y historicos desde alpha vantage
-    - cachear datos en base de datos local
-    - buscar y registrar nuevos activos
-    - actualizar catalogo de activos
-    """
-    
+    """Servicio para gestión de datos de mercado."""
+
     def __init__(self, db: Session):
-        """
-        inicializa el servicio.
-        
-        args:
-            db: sesion de base de datos
-        """
         self.db = db
         self.asset_repo = AssetRepository(db)
         self.alpha_client = AlphaVantageClient()
-    
+
     def get_current_price(self, symbol: str) -> Optional[Decimal]:
-        """
-        obtiene el precio actual de un activo.
-        
-        flujo:
-        1. busca precio reciente en cache (< 5 minutos)
-        2. si no hay cache valido, consulta alpha vantage
-        3. almacena el nuevo precio en cache
-        
-        args:
-            symbol: simbolo del activo
-            
-        returns:
-            precio actual como decimal o none si no se encuentra
-        """
+        """Obtiene el precio actual de un activo, registrándolo automáticamente si no existe."""
         symbol = symbol.upper()
+        quote = None  # inicializar quote
         
-        # intentar obtener precio del cache
-        cached_price = self.asset_repo.get_latest_price(symbol)
-        if cached_price and self._is_price_fresh(cached_price.timestamp):
-            logger.info(f"usando precio cacheado para {symbol}: ${cached_price.price}")
-            return cached_price.price
+        # Priorizamos fetch directo del quote sobre search_symbol para no quemar el rate-limit tan rápido.
+        # Sino cambiábamos esto así, se agotaba el rate-limit de Alpha Vantage en minutos por llamadas
+        # innecesarias a búsqueda.
+        asset = self.asset_repo.get_by_symbol(symbol)
+        if not asset:
+            # intentar obtener quote directamente (evita search que consume rate limit)
+            logger.info(f"Consultando quote directo para {symbol}")
+            quote = self.alpha_client.get_quote(symbol)
+            
+            if quote and "price" in quote:
+                # crear asset con info basica del quote
+                asset = self.asset_repo.get_or_create(
+                    symbol=symbol,
+                    name=symbol,  # usamos el simbolo como nombre
+                    asset_type=DEFAULT_ASSET_TYPE,
+                    currency="USD"
+                )
+                logger.info(f"Asset {symbol} registrado desde quote directo")
+            else:
+                # fallback: intentar search solo si quote falla
+                search_results = self.alpha_client.search_symbol(symbol)
+                if not search_results:
+                    logger.error(f"Símbolo {symbol} no encontrado en Alpha Vantage")
+                    return None
+                
+                match = search_results[0]
+                asset = self.asset_repo.get_or_create(
+                    symbol=symbol,
+                    name=match.get("name", symbol),
+                    asset_type=ALPHA_VANTAGE_TYPE_MAPPING.get(match.get("type", ""), DEFAULT_ASSET_TYPE),
+                    currency=match.get("currency", "USD")
+                )
+                logger.info(f"Asset {symbol} registrado desde búsqueda")
+                
+                # resetear quote para forzar nueva consulta
+                quote = None
         
-        # obtener precio de alpha vantage
-        logger.info(f"consultando alpha vantage para {symbol}")
-        quote = self.alpha_client.get_quote(symbol)
+        # Unificamos todo bajo get_historical_prices. Antes teníamos código duplicado con diferentes
+        # nombres para lo mismo (get_price_history vs get_historical_prices).
+        cached_prices = self.asset_repo.get_historical_prices(symbol, days=1)
+        if cached_prices:
+            latest = cached_prices[-1]
+            if self._is_price_fresh(latest.timestamp):
+                logger.info(f"Precio en cache para {symbol}: ${latest.close_price}")
+                return latest.close_price
         
-        if not quote:
-            logger.warning(f"no se pudo obtener precio para {symbol}")
+        # solo consultar si no lo hicimos arriba
+        if quote is None:
+            logger.info(f"Consultando Alpha Vantage para {symbol}")
+            quote = self.alpha_client.get_quote(symbol)
+        
+        if not quote or "price" not in quote:
+            logger.error(
+                f"Símbolo {symbol} no tiene datos en Alpha Vantage "
+                f"(aparece en búsqueda pero sin quotes disponibles)"
+            )
             return None
         
-        # guardar precio en cache
-        price = Decimal(str(quote["price"]))
+        try:
+            price = Decimal(str(quote["price"]))
+            if price <= 0:
+                logger.warning(f"Precio inválido para {symbol}: {price}")
+                return None
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error al parsear precio para {symbol}: {e}")
+            return None
+        
+        # Alpha Vantage a veces no devuelve todos los campos, así que usamos .get() con defaults.
+        # Sino cambiábamos esto así, el servicio se caía con KeyError cuando faltaban datos.
         self._save_price(
             symbol=symbol,
             price=price,
-            open_price=Decimal(str(quote["open"])),
-            high=Decimal(str(quote["high"])),
-            low=Decimal(str(quote["low"])),
-            volume=quote["volume"],
-            date=quote["timestamp"]
+            open_price=Decimal(str(quote.get("open", "0"))),
+            high=Decimal(str(quote.get("high", "0"))),
+            low=Decimal(str(quote.get("low", "0"))),
+            volume=int(float(quote.get("volume", 0))),
+            date=quote.get("timestamp", datetime.utcnow().strftime("%Y-%m-%d"))
         )
         
-        logger.info(f"precio actualizado para {symbol}: ${price}")
+        logger.info(f"Precio actualizado para {symbol}: ${price}")
         return price
-    
+
     def get_historical_prices(
-        self, 
-        symbol: str, 
+        self,
+        symbol: str,
         days: int = 30
     ) -> List[Dict[str, Any]]:
-        """
-        obtiene datos historicos de precios.
-        
-        flujo:
-        1. verifica cache local
-        2. si faltan datos, consulta alpha vantage
-        3. almacena datos nuevos
-        
-        args:
-            symbol: simbolo del activo
-            days: numero de dias de historia (max 100 en free tier)
-            
-        returns:
-            lista de precios historicos ordenados por fecha desc
-        """
+        """Obtiene datos históricos, registrando automáticamente el asset si no existe."""
         symbol = symbol.upper()
         
-        # intentar obtener del cache
-        cached_prices = self.asset_repo.get_price_history(symbol, days)
+        # Registramos automáticamente el asset si no existe. Antes fallaba silenciosamente y el
+        # frontend no podía mostrar gráficos para símbolos nuevos.
+        asset = self.asset_repo.get_by_symbol(symbol)
+        if not asset:
+            search_results = self.alpha_client.search_symbol(symbol)
+            if not search_results:
+                logger.error(f"Símbolo {symbol} no encontrado en Alpha Vantage")
+                return []
+            
+            match = search_results[0]
+            asset = self.asset_repo.get_or_create(
+                symbol=symbol,
+                name=match.get("name", symbol),
+                asset_type=ALPHA_VANTAGE_TYPE_MAPPING.get(match.get("type", ""), DEFAULT_ASSET_TYPE),
+                currency=match.get("currency", "USD")
+            )
+            logger.info(f"Asset {symbol} registrado automáticamente")
         
-        # si tenemos datos recientes suficientes, retornarlos
+        cached_prices = self.asset_repo.get_historical_prices(symbol, days)
+        
         if cached_prices and len(cached_prices) >= days:
-            logger.info(f"usando {len(cached_prices)} precios cacheados para {symbol}")
+            logger.info(f"Usando {len(cached_prices)} precios en cache para {symbol}")
             return self._format_price_history(cached_prices)
         
-        # obtener datos de alpha vantage
-        logger.info(f"consultando datos historicos de alpha vantage para {symbol}")
+        logger.info(f"Consultando historicos para {symbol}")
         outputsize = "compact" if days <= 100 else "full"
         prices_data = self.alpha_client.get_daily_prices(symbol, outputsize)
         
         if not prices_data:
-            logger.warning(f"no se pudieron obtener datos historicos para {symbol}")
-            # retornar cache si lo hay
+            logger.warning(f"Sin datos históricos para {symbol}")
             return self._format_price_history(cached_prices) if cached_prices else []
         
-        # guardar precios en cache
         for price_data in prices_data[:days]:
             self._save_price(
                 symbol=symbol,
@@ -134,117 +171,80 @@ class MarketDataService:
                 open_price=Decimal(str(price_data["open"])),
                 high=Decimal(str(price_data["high"])),
                 low=Decimal(str(price_data["low"])),
-                volume=price_data["volume"],
+                volume=int(float(price_data.get("volume", 0))),
                 date=price_data["date"]
             )
         
-        # obtener precios actualizados del cache
-        updated_prices = self.asset_repo.get_price_history(symbol, days)
-        logger.info(f"datos historicos actualizados para {symbol}: {len(updated_prices)} registros")
+        updated_prices = self.asset_repo.get_historical_prices(symbol, days)
+        logger.info(f"Historicos actualizados para {symbol}: {len(updated_prices)} registros")
         
         return self._format_price_history(updated_prices)
-    
+
     def search_assets(self, keywords: str) -> List[Dict[str, Any]]:
-        """
-        busca activos por keywords.
-        
-        primero busca en catalogo local, luego en alpha vantage.
-        
-        args:
-            keywords: terminos de busqueda
-            
-        returns:
-            lista de activos encontrados
-        """
-        # buscar en catalogo local
+        """Busca activos: primero BD local, luego Alpha Vantage."""
         local_results = self.asset_repo.search_assets(keywords)
         
         if local_results:
-            logger.info(f"encontrados {len(local_results)} activos locales para '{keywords}'")
-            results = []
-            for asset in local_results:
-                results.append({
+            logger.info(f"Encontrados {len(local_results)} assets locales para '{keywords}'")
+            return [
+                {
                     "symbol": asset.symbol,
                     "name": asset.name,
                     "type": asset.asset_type,
                     "currency": asset.currency,
                     "source": "local"
-                })
-            return results
+                }
+                for asset in local_results
+            ]
         
-        # buscar en alpha vantage
-        logger.info(f"buscando en alpha vantage para '{keywords}'")
+        logger.info(f"Buscando en Alpha Vantage: '{keywords}'")
         av_results = self.alpha_client.search_symbol(keywords)
         
         if not av_results:
             return []
         
-        # formatear resultados
-        results = []
-        for match in av_results:
-            results.append({
+        # Aplicamos mapeo consistente de tipos de Alpha Vantage. Antes teníamos 'Equity' vs 'STOCK'
+        # mezclados en la base y era un desastre.
+        return [
+            {
                 "symbol": match["symbol"],
                 "name": match["name"],
-                "type": match["type"],
-                "currency": match["currency"],
+                "type": ALPHA_VANTAGE_TYPE_MAPPING.get(
+                    match.get("type", ""), DEFAULT_ASSET_TYPE
+                ),
+                "currency": match.get("currency", "USD"),
                 "source": "alpha_vantage"
-            })
-        
-        return results
-    
+            }
+            for match in av_results
+        ]
+
     def register_asset(
         self,
         symbol: str,
         name: str,
-        asset_type: str = "Stock",
-        currency: str = "USD",
-        exchange: Optional[str] = None
+        asset_type: str = "STOCK",
+        currency: str = "USD"
     ) -> Asset:
-        """
-        registra un nuevo activo en el catalogo.
-        
-        usa get_or_create para evitar duplicados.
-        
-        args:
-            symbol: simbolo del activo
-            name: nombre del activo
-            asset_type: tipo (Stock, ETF, Crypto, etc)
-            currency: moneda
-            exchange: bolsa donde cotiza
-            
-        returns:
-            activo registrado
-        """
+        """Registra explícitamente un nuevo asset en BD."""
         asset = self.asset_repo.get_or_create(
             symbol=symbol.upper(),
             name=name,
-            asset_type=asset_type,
-            currency=currency.upper(),
-            exchange=exchange
+            asset_type=asset_type.upper(),
+            currency=currency.upper()
         )
         
-        logger.info(f"activo registrado: {asset.symbol} - {asset.name}")
+        logger.info(f"Asset registrado: {asset.symbol} - {asset.name}")
         return asset
-    
-    def update_portfolio_prices(self, portfolio_id) -> int:
-        """
-        actualiza precios de todos los activos en un portfolio.
-        
-        util para refrescar valores antes de calcular metricas.
-        
-        args:
-            portfolio_id: id del portfolio
-            
-        returns:
-            numero de precios actualizados
-        """
+
+    def update_portfolio_prices(self, portfolio_id: int) -> int:
+        """Actualiza precios de assets en un portfolio."""
         from app.repositories.portfolio import PortfolioRepository
         
         portfolio_repo = PortfolioRepository(self.db)
         portfolio = portfolio_repo.get_with_positions(portfolio_id)
         
         if not portfolio:
-            logger.warning(f"portfolio {portfolio_id} no encontrado")
+            logger.warning(f"Portfolio {portfolio_id} no encontrado")
             return 0
         
         updated_count = 0
@@ -257,27 +257,17 @@ class MarketDataService:
                 position.current_price = price
                 updated_count += 1
         
-        # recalcular metricas del portfolio
         portfolio.calculate_metrics()
         self.db.commit()
         
-        logger.info(f"actualizados {updated_count} precios para portfolio {portfolio_id}")
+        logger.info(f"Actualizados {updated_count} precios para portfolio {portfolio_id}")
         return updated_count
-    
+
     def _is_price_fresh(self, timestamp: datetime, max_age_minutes: int = 5) -> bool:
-        """
-        verifica si un precio esta actualizado.
-        
-        args:
-            timestamp: timestamp del precio
-            max_age_minutes: antiguedad maxima en minutos
-            
-        returns:
-            true si el precio es reciente
-        """
+        """Verifica si un precio está actualizado."""
         age = datetime.utcnow() - timestamp
         return age < timedelta(minutes=max_age_minutes)
-    
+
     def _save_price(
         self,
         symbol: str,
@@ -287,69 +277,44 @@ class MarketDataService:
         low: Decimal,
         volume: int,
         date: str
-    ):
+    ) -> None:
         """
-        guarda un precio en la base de datos.
+        Guarda precio en BD.
         
-        args:
-            symbol: simbolo del activo
-            price: precio de cierre
-            open_price: precio de apertura
-            high: precio maximo
-            low: precio minimo
-            volume: volumen
-            date: fecha (formato YYYY-MM-DD)
+        Precondición: El asset DEBE existir en BD antes de llamar esto.
         """
-        # verificar si ya existe este precio
-        existing = self.asset_repo.get_price_by_date(symbol, date)
-        if existing:
-            # actualizar precio existente
-            existing.price = price
-            existing.open_price = open_price
-            existing.high = high
-            existing.low = low
-            existing.volume = volume
-            existing.timestamp = datetime.utcnow()
-        else:
-            # crear nuevo registro
-            price_obj = AssetPrice(
+        # El repositorio ahora usa open_price, high_price, low_price, close_price explícitamente.
+        # Antes había mismatch entre el modelo AssetPrice y lo que guardábamos.
+        try:
+            timestamp = datetime.strptime(date, "%Y-%m-%d")
+            self.asset_repo.add_price(
                 asset_symbol=symbol,
-                price=price,
-                open_price=open_price,
-                high=high,
-                low=low,
-                volume=volume,
-                date=datetime.strptime(date, "%Y-%m-%d").date(),
-                timestamp=datetime.utcnow(),
-                source="alpha_vantage"
+                timestamp=timestamp,
+                open_price=float(open_price),
+                high_price=float(high),
+                low_price=float(low),
+                close_price=float(price),
+                volume=float(volume)
             )
-            self.db.add(price_obj)
-        
-        self.db.commit()
-    
+        except Exception as e:
+            logger.error(f"Error guardando precio para {symbol}: {e}")
+
     def _format_price_history(self, prices: List[AssetPrice]) -> List[Dict[str, Any]]:
-        """
-        formatea lista de precios para respuesta.
-        
-        args:
-            prices: lista de objetos AssetPrice
-            
-        returns:
-            lista de diccionarios con datos formateados
-        """
+        """Formatea precios para respuesta API."""
+        # AssetPrice ya no tiene 'price', ahora es 'close_price'. Sino cambiábamos esto así,
+        # el API devolvía AttributeError: 'AssetPrice' has no 'price'.
         return [
             {
-                "date": price.date.strftime("%Y-%m-%d"),
+                "date": price.timestamp.strftime("%Y-%m-%d"),
                 "open": float(price.open_price),
-                "high": float(price.high),
-                "low": float(price.low),
-                "close": float(price.price),
-                "volume": price.volume
+                "high": float(price.high_price),
+                "low": float(price.low_price),
+                "close": float(price.close_price),
+                "volume": float(price.volume)
             }
             for price in prices
         ]
-    
-    def __del__(self):
-        """cierra el cliente al destruir el servicio."""
+
+    def __del__(self) -> None:
         if hasattr(self, 'alpha_client'):
             self.alpha_client.close()
