@@ -17,13 +17,18 @@ class AnalysisRepository(BaseRepository[Analysis]):
         super().__init__(Analysis, db)
     
     def get_cached_analysis(self, portfolio_id: Optional[UUID] = None,
-                           asset_symbol: Optional[str] = None) -> Optional[Analysis]:
+                           asset_symbol: Optional[str] = None,
+                           analysis_type: Optional[AnalysisType] = None) -> Optional[Analysis]:
         """
         obtiene un analisis cacheado valido (no expirado).
+        
+        FIX: agregado parametro analysis_type para filtrar correctamente el cache
+        problema: sin este parametro se retornaban analisis de tipo incorrecto
         
         args:
             portfolio_id: id del portfolio (para analisis de portfolio)
             asset_symbol: simbolo del activo (para analisis de activo)
+            analysis_type: tipo de analisis
             
         returns:
             analisis valido si existe en cache
@@ -36,6 +41,8 @@ class AnalysisRepository(BaseRepository[Analysis]):
             query = query.filter(Analysis.portfolio_id == portfolio_id)
         if asset_symbol:
             query = query.filter(Analysis.asset_symbol == asset_symbol.upper())
+        if analysis_type:
+            query = query.filter(Analysis.analysis_type == analysis_type)
         
         return query.first()
     
@@ -116,3 +123,33 @@ class AnalysisRepository(BaseRepository[Analysis]):
             self.db.refresh(request)
         
         return request
+    
+    def get_by_portfolio(self, portfolio_id: UUID, limit: int = 10) -> list[Analysis]:
+        """
+        obtiene analisis recientes de un portfolio.
+        
+        args:
+            portfolio_id: id del portfolio
+            limit: numero maximo de resultados
+            
+        returns:
+            lista de analisis ordenados por fecha desc
+        """
+        return self.db.query(Analysis).filter(
+            Analysis.portfolio_id == portfolio_id
+        ).order_by(Analysis.generated_at.desc()).limit(limit).all()
+    
+    def get_by_asset(self, asset_symbol: str, limit: int = 10) -> list[Analysis]:
+        """
+        obtiene analisis recientes de un activo.
+        
+        args:
+            asset_symbol: simbolo del activo
+            limit: numero maximo de resultados
+            
+        returns:
+            lista de analisis ordenados por fecha desc
+        """
+        return self.db.query(Analysis).filter(
+            Analysis.asset_symbol == asset_symbol.upper()
+        ).order_by(Analysis.generated_at.desc()).limit(limit).all()

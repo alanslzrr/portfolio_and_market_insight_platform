@@ -76,6 +76,8 @@ def generate_asset_analysis(
             )
         )
     
+    # FIX: removido cached=analysis.cached (el campo no existe en el modelo Analysis)
+    # FIX: agregado disclaimer requerido por el schema AnalysisResponse
     return AnalysisResponse(
         id=analysis.id,
         portfolio_id=analysis.portfolio_id,
@@ -85,7 +87,7 @@ def generate_asset_analysis(
         technical_indicators=analysis.technical_indicators,
         generated_at=analysis.generated_at,
         expires_at=analysis.expires_at,
-        cached=analysis.cached
+        disclaimer="Este análisis es generado por IA y no constituye asesoramiento financiero."
     )
 
 
@@ -167,7 +169,7 @@ def generate_portfolio_analysis(
         technical_indicators=analysis.technical_indicators,
         generated_at=analysis.generated_at,
         expires_at=analysis.expires_at,
-        cached=analysis.cached
+        disclaimer="Este análisis es generado por IA y no constituye asesoramiento financiero."
     )
 
 
@@ -214,7 +216,7 @@ def get_analysis_history(
             technical_indicators=analysis.technical_indicators,
             generated_at=analysis.generated_at,
             expires_at=analysis.expires_at,
-            cached=analysis.cached
+            disclaimer="Este análisis es generado por IA y no constituye asesoramiento financiero."
         )
         for analysis in analyses
     ]

@@ -17,7 +17,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from app.clients.openai_client import OpenAIClient
 from app.services.market_service import MarketDataService
-from app.models.analysis import Analysis, AnalysisRequest
+# FIX: agregados AnalysisType y AnalysisStatus para usar enums en lugar de strings
+# problema: se usaban strings como "completed", "failed", "asset_technical" que causaban
+# errores de tipo InvalidTextRepresentation en PostgreSQL
+from app.models.analysis import Analysis, AnalysisRequest, AnalysisType, AnalysisStatus
 from app.repositories.analysis import AnalysisRepository
 from app.repositories.portfolio import PortfolioRepository
 from ai_module.src.processors.technical_indicators import TechnicalIndicators
@@ -86,20 +89,23 @@ class AnalysisService:
         
         # buscar en cache si no es force_regenerate
         if not force_regenerate:
+            # FIX: agregado analysis_type=AnalysisType.ASSET para filtrar correctamente
             cached = self.analysis_repo.get_cached_analysis(
                 asset_symbol=symbol,
-                analysis_type="asset_technical"
+                analysis_type=AnalysisType.ASSET
             )
             if cached:
                 logger.info(f"usando analisis cacheado para {symbol}")
                 return cached
         
         # crear solicitud de analisis
+        # FIX: agregado analysis_type y usando AnalysisStatus.PENDING en lugar de "processing"
         request = AnalysisRequest(
             user_id=user_id,
+            analysis_type=AnalysisType.ASSET,
             asset_symbol=symbol,
             portfolio_id=None,
-            status="processing"
+            status=AnalysisStatus.PENDING
         )
         self.db.add(request)
         self.db.commit()
@@ -111,7 +117,7 @@ class AnalysisService:
             
             if not price_history or len(price_history) < 30:
                 logger.warning(f"insuficientes datos historicos para {symbol}")
-                request.status = "failed"
+                request.status = AnalysisStatus.FAILED
                 self.db.commit()
                 return None
             
@@ -132,28 +138,29 @@ class AnalysisService:
             
             if not analysis_text:
                 logger.error(f"fallo la generacion de analisis para {symbol}")
-                request.status = "failed"
+                request.status = AnalysisStatus.FAILED
                 self.db.commit()
                 return None
             
             # crear objeto analysis
             expires_at = datetime.utcnow() + timedelta(hours=self.CACHE_TTL_HOURS)
             
+            # FIX: removido cached=True (el campo no existe en el modelo)
+            # FIX: usando AnalysisType.ASSET enum en lugar de "asset_technical"
             analysis = Analysis(
                 portfolio_id=None,
                 asset_symbol=symbol,
-                analysis_type="asset_technical",
+                analysis_type=AnalysisType.ASSET,
                 analysis_text=analysis_text,
                 technical_indicators=indicators,
                 generated_at=datetime.utcnow(),
-                expires_at=expires_at,
-                cached=True
+                expires_at=expires_at
             )
             
             self.db.add(analysis)
             
             # actualizar solicitud
-            request.status = "completed"
+            request.status = AnalysisStatus.COMPLETED
             
             self.db.commit()
             
@@ -162,7 +169,7 @@ class AnalysisService:
             
         except Exception as e:
             logger.error(f"error generando analisis para {symbol}: {e}")
-            request.status = "failed"
+            request.status = AnalysisStatus.FAILED
             self.db.commit()
             return None
     
@@ -200,7 +207,7 @@ class AnalysisService:
         if not force_regenerate:
             cached = self.analysis_repo.get_cached_analysis(
                 portfolio_id=portfolio_id,
-                analysis_type="portfolio_overview"
+                analysis_type=AnalysisType.PORTFOLIO
             )
             if cached:
                 logger.info(f"usando analisis cacheado para portfolio {portfolio_id}")
@@ -209,9 +216,10 @@ class AnalysisService:
         # crear solicitud de analisis
         request = AnalysisRequest(
             user_id=user_id,
+            analysis_type=AnalysisType.PORTFOLIO,
             asset_symbol=None,
             portfolio_id=portfolio_id,
-            status="processing"
+            status=AnalysisStatus.PENDING
         )
         self.db.add(request)
         self.db.commit()
@@ -222,14 +230,14 @@ class AnalysisService:
             
             if not portfolio:
                 logger.error(f"portfolio {portfolio_id} no encontrado")
-                request.status = "failed"
+                request.status = AnalysisStatus.FAILED
                 self.db.commit()
                 return None
             
             # verificar que haya posiciones
             if not portfolio.assets or len(portfolio.assets) == 0:
                 logger.warning(f"portfolio {portfolio_id} no tiene posiciones")
-                request.status = "failed"
+                request.status = AnalysisStatus.FAILED
                 self.db.commit()
                 return None
             
@@ -273,7 +281,7 @@ class AnalysisService:
             
             if not analysis_text:
                 logger.error(f"fallo la generacion de analisis para portfolio {portfolio_id}")
-                request.status = "failed"
+                request.status = AnalysisStatus.FAILED
                 self.db.commit()
                 return None
             
@@ -283,7 +291,7 @@ class AnalysisService:
             analysis = Analysis(
                 portfolio_id=portfolio_id,
                 asset_symbol=None,
-                analysis_type="portfolio_overview",
+                analysis_type=AnalysisType.PORTFOLIO,
                 analysis_text=analysis_text,
                 technical_indicators={
                     "total_positions": len(positions),
@@ -291,14 +299,13 @@ class AnalysisService:
                     "performance": portfolio_data["gain_loss_percent"]
                 },
                 generated_at=datetime.utcnow(),
-                expires_at=expires_at,
-                cached=True
+                expires_at=expires_at
             )
             
             self.db.add(analysis)
             
             # actualizar solicitud
-            request.status = "completed"
+            request.status = AnalysisStatus.COMPLETED
             
             self.db.commit()
             
@@ -307,7 +314,7 @@ class AnalysisService:
             
         except Exception as e:
             logger.error(f"error generando analisis de portfolio {portfolio_id}: {e}")
-            request.status = "failed"
+            request.status = AnalysisStatus.FAILED
             self.db.commit()
             return None
     

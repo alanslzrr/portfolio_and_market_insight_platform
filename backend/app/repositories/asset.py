@@ -74,10 +74,37 @@ class AssetRepository(BaseRepository[Asset]):
     def add_price(self, asset_symbol: str, timestamp: datetime, 
                   open_price: float, high_price: float, low_price: float,
                   close_price: float, volume: float) -> AssetPrice:
-        """agrega un precio historico para un activo."""
+        """
+        agrega un precio historico para un activo (con upsert para duplicados).
+        
+        FIX: implementado upsert para evitar UniqueViolation en (asset_symbol, timestamp)
+        problema: Alpha Vantage podia devolver datos duplicados causando IntegrityError
+        solucion: normalizar timestamp y actualizar si existe, insertar si no existe
+        """
+        # normalizar timestamp a medianoche para consistencia
+        timestamp_normalized = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # buscar si ya existe
+        existing = self.db.query(AssetPrice).filter(
+            AssetPrice.asset_symbol == asset_symbol.upper(),
+            AssetPrice.timestamp == timestamp_normalized
+        ).first()
+        
+        if existing:
+            # actualizar valores existentes
+            existing.open_price = open_price
+            existing.high_price = high_price
+            existing.low_price = low_price
+            existing.close_price = close_price
+            existing.volume = volume
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing
+        
+        # crear nuevo registro
         price = AssetPrice(
             asset_symbol=asset_symbol.upper(),
-            timestamp=timestamp,
+            timestamp=timestamp_normalized,
             open_price=open_price,
             high_price=high_price,
             low_price=low_price,
